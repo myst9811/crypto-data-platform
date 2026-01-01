@@ -1,0 +1,109 @@
+exchanges:
+  binance:
+    name: Binance
+    websocket:
+      base_url: "wss://stream.binance.com:9443"
+      streams:
+        trades: "/ws/{symbol}@trade"
+        orderbook: "/ws/{symbol}@depth20@100ms"
+        ticker: "/ws/{symbol}@ticker"
+    rest_api:
+      base_url: "https://api.binance.com"
+      endpoints:
+        exchange_info: "/api/v3/exchangeInfo"
+    trading_pairs:
+      - btcusdt
+      - ethusdt
+      - bnbusdt
+      - solusdt
+      - xrpusdt
+    fees:
+      maker: 0.1  # 0.1%
+      taker: 0.1
+      withdrawal: 0.0005  # BTC
+    reconnect:
+      max_retries: 5
+      backoff_multiplier: 2
+      initial_delay: 1
+
+  coinbase:
+    name: Coinbase Pro
+    websocket:
+      base_url: "wss://ws-feed.exchange.coinbase.com"
+      channels:
+        - matches    # trades
+        - level2     # orderbook
+        - ticker     # ticker
+    rest_api:
+      base_url: "https://api.exchange.coinbase.com"
+      endpoints:
+        products: "/products"
+    trading_pairs:
+      - BTC-USD
+      - ETH-USD
+      - SOL-USD
+      - XRP-USD
+    fees:
+      maker: 0.0  # 0%
+      taker: 0.05  # 0.05%
+      withdrawal: 0.0
+    reconnect:
+      max_retries: 5
+      backoff_multiplier: 2
+      initial_delay: 1
+
+  kraken:
+    name: Kraken
+    websocket:
+      base_url: "wss://ws.kraken.com"
+      channels:
+        - trade
+        - book    # orderbook
+        - spread
+        - ticker
+    rest_api:
+      base_url: "https://api.kraken.com"
+      endpoints:
+        asset_pairs: "/0/public/AssetPairs"
+    trading_pairs:
+      - XBT/USD    # BTC
+      - ETH/USD
+      - SOL/USD
+      - XRP/USD
+    fees:
+      maker: 0.16  # 0.16%
+      taker: 0.26  # 0.26%
+      withdrawal: 0.00015  # BTC
+    reconnect:
+      max_retries: 5
+      backoff_multiplier: 2
+      initial_delay: 1
+
+# Symbol normalization mapping
+symbol_mapping:
+  binance_to_standard:
+    btcusdt: BTC/USD
+    ethusdt: ETH/USD
+    bnbusdt: BNB/USD
+    solusdt: SOL/USD
+    xrpusdt: XRP/USD
+
+  coinbase_to_standard:
+    BTC-USD: BTC/USD
+    ETH-USD: ETH/USD
+    SOL-USD: SOL/USD
+    XRP-USD: XRP/USD
+
+  kraken_to_standard:
+    XBT/USD: BTC/USD
+    ETH/USD: ETH/USD
+    SOL/USD: SOL/USD
+    XRP/USD: XRP/USD
+
+# Standard trading pairs to track
+standard_pairs:
+  - BTC/USD
+  - ETH/USD
+  - BNB/USD
+  - SOL/USD
+  - XRP/USD

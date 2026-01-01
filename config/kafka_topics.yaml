@@ -1,0 +1,48 @@
+topics:
+  raw_trades:
+    name: raw-trades
+    partitions: 3
+    replication_factor: 1
+    config:
+      retention.ms: 604800000  # 7 days
+      compression.type: snappy
+      cleanup.policy: delete
+    description: "Raw trade data from all exchanges"
+
+  raw_orderbook:
+    name: raw-orderbook
+    partitions: 3
+    replication_factor: 1
+    config:
+      retention.ms: 604800000  # 7 days
+      compression.type: snappy
+      cleanup.policy: delete
+    description: "Raw order book snapshots from all exchanges"
+
+  raw_ticker:
+    name: raw-ticker
+    partitions: 3
+    replication_factor: 1
+    config:
+      retention.ms: 604800000  # 7 days
+      compression.type: snappy
+      cleanup.policy: delete
+    description: "Raw ticker data (24h stats) from all exchanges"
+
+consumer_groups:
+  spark_streaming:
+    name: spark-streaming-consumer
+    topics:
+      - raw-trades
+      - raw-orderbook
+      - raw-ticker
+    auto_offset_reset: latest
+    enable_auto_commit: false
+
+producer_config:
+  compression_type: snappy
+  acks: 1
+  retries: 3
+  max_in_flight_requests_per_connection: 5
+  linger_ms: 10
+  batch_size: 16384

@@ -1,0 +1,100 @@
+spark:
+  app_name: "crypto-streaming-pipeline"
+  master: "spark://localhost:7077"
+
+  # Spark configuration
+  config:
+    spark.executor.memory: "2g"
+    spark.driver.memory: "1g"
+    spark.executor.cores: 2
+    spark.sql.streaming.checkpointLocation: "./data/checkpoints"
+    spark.sql.streaming.schemaInference: "true"
+    spark.sql.shuffle.partitions: 10
+
+    # Delta Lake configurations
+    spark.sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
+    spark.sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+    spark.databricks.delta.retentionDurationCheck.enabled: "false"
+    spark.databricks.delta.schema.autoMerge.enabled: "true"
+
+    # Kafka configurations
+    spark.streaming.kafka.maxRatePerPartition: 100
+    spark.streaming.backpressure.enabled: "true"
+
+    # Serialization
+    spark.serializer: "org.apache.spark.serializer.KryoSerializer"
+
+# Streaming configurations
+streaming:
+  trigger:
+    processing_time: "10 seconds"
+
+  watermark:
+    delay: "30 seconds"
+
+  batch_size: 1000
+
+  output_mode: "append"  # append, complete, update
+
+# Kafka source configuration
+kafka:
+  bootstrap_servers: "localhost:9092"
+  subscribe: "raw-trades,raw-orderbook,raw-ticker"
+  starting_offsets: "latest"  # earliest or latest
+  fail_on_data_loss: "false"
+  max_offsets_per_trigger: 10000
+
+# Delta Lake paths
+delta_lake:
+  bronze:
+    trades: "./data/bronze/trades"
+    orderbook: "./data/bronze/orderbook"
+    ticker: "./data/bronze/ticker"
+
+  silver:
+    trades: "./data/silver/trades"
+    orderbook: "./data/silver/orderbook"
+    ticker: "./data/silver/ticker"
+    normalized_prices: "./data/silver/normalized_prices"
+
+  gold:
+    arbitrage_opportunities: "./data/gold/arbitrage_opportunities"
+    volume_aggregates: "./data/gold/volume_aggregates"
+    liquidity_metrics: "./data/gold/liquidity_metrics"
+    vwap: "./data/gold/vwap"
+
+  checkpoints:
+    bronze: "./data/checkpoints/bronze"
+    silver: "./data/checkpoints/silver"
+    gold: "./data/checkpoints/gold"
+
+# Window configurations for aggregations
+windows:
+  minute_1:
+    duration: "1 minute"
+    slide: "30 seconds"
+
+  minute_5:
+    duration: "5 minutes"
+    slide: "1 minute"
+
+  minute_15:
+    duration: "15 minutes"
+    slide: "5 minutes"
+
+  hour_1:
+    duration: "1 hour"
+    slide: "15 minutes"
+
+# Arbitrage detection configuration
+arbitrage:
+  threshold_percent: 0.5  # Minimum spread percentage to flag
+  min_volume: 1.0  # Minimum volume required
+  max_spread_age_seconds: 10  # Maximum age of price data to consider
+
+# Data quality thresholds
+data_quality:
+  max_null_percentage: 5
+  max_outlier_std_dev: 3
+  min_records_per_batch: 10
+  freshness_threshold_seconds: 60
