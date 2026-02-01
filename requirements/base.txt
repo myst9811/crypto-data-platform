@@ -7,3 +7,6 @@ python-dotenv==1.0.0
 pyyaml==6.0.1
 requests==2.31.0
 python-json-logger==2.0.7
+
+# Delta Lake reader (no Spark required)
+deltalake==0.14.0
