@@ -12,7 +12,6 @@ from src.serving.api.schemas.prices import (
     PriceHistoryResponse,
 )
 from src.serving.api.schemas.common import SymbolListResponse, ExchangeListResponse
-from src.serving.data_access.delta_reader import DeltaReader
 from src.serving.config import ServingConfig
 
 router = APIRouter()
@@ -23,7 +22,7 @@ async def get_prices(
     symbol: Optional[str] = Query(None, description="Filter by trading symbol (e.g., BTC/USD)"),
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> PriceListResponse:
     """
     Get latest prices.
@@ -53,7 +52,7 @@ async def get_prices(
 
 @router.get("/symbols", response_model=SymbolListResponse)
 async def get_symbols(
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> SymbolListResponse:
     """Get list of available trading symbols."""
     return SymbolListResponse(symbols=reader.get_available_symbols())
@@ -61,7 +60,7 @@ async def get_symbols(
 
 @router.get("/exchanges", response_model=ExchangeListResponse)
 async def get_exchanges(
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> ExchangeListResponse:
     """Get list of available exchanges."""
     return ExchangeListResponse(exchanges=reader.get_available_exchanges())
@@ -70,7 +69,7 @@ async def get_exchanges(
 @router.get("/compare", response_model=PriceComparisonResponse)
 async def compare_prices(
     symbol: str = Query(..., description="Trading symbol to compare"),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> PriceComparisonResponse:
     """
     Compare prices across all exchanges for a symbol.
@@ -123,7 +122,7 @@ async def get_symbol_prices(
     symbol: str,
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     limit: int = Query(100, ge=1, le=1000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> PriceListResponse:
     """Get latest prices for a specific symbol."""
     try:
@@ -160,7 +159,7 @@ async def get_price_history(
     end: datetime = Query(..., description="End datetime"),
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     limit: int = Query(1000, ge=1, le=10000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> PriceHistoryResponse:
     """Get historical prices for a symbol."""
     try:
