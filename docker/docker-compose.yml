@@ -90,7 +90,7 @@ services:
 
   # Spark Master
   spark-master:
-    image: bitnami/spark:3.5.0
+    image: bitnami/spark:3.5
     container_name: spark-master
     hostname: spark-master
     ports:
@@ -112,7 +112,7 @@ services:
 
   # Spark Worker
   spark-worker:
-    image: bitnami/spark:3.5.0
+    image: bitnami/spark:3.5
     container_name: spark-worker
     depends_on:
       - spark-master

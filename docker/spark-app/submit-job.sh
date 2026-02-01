@@ -43,6 +43,6 @@ echo "Submitting Spark streaming job..."
     --conf spark.streaming.kafka.maxRatePerPartition=100 \
     --conf spark.sql.streaming.checkpointLocation=/opt/spark-data/checkpoints \
     /opt/spark-apps/processing/spark_streaming.py \
-    --config /opt/spark-apps/config/spark_config.yaml
+    --config /opt/spark-apps/config/spark_config_docker.yaml
 
 echo "Spark job submitted successfully!"
