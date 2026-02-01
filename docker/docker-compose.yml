@@ -1,6 +1,10 @@
 version: '3.8'
 
 services:
+  # ============================================
+  # INFRASTRUCTURE
+  # ============================================
+
   # Zookeeper for Kafka
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -16,6 +20,7 @@ services:
       - zookeeper-logs:/var/lib/zookeeper/log
     networks:
       - crypto-network
+    restart: unless-stopped
 
   # Kafka Broker
   kafka:
@@ -41,9 +46,14 @@ services:
       KAFKA_JMX_HOSTNAME: localhost
     volumes:
       - kafka-data:/var/lib/kafka/data
-      - ./kafka/init-topics.sh:/scripts/init-topics.sh
     networks:
       - crypto-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
   # Kafka UI for monitoring
   kafka-ui:
@@ -54,11 +64,29 @@ services:
     ports:
       - "8080:8080"
     environment:
-      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_NAME: crypto-cluster
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
     networks:
       - crypto-network
+    restart: unless-stopped
+
+  # Kafka Topic Initialization
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./kafka/init-topics.sh:/scripts/init-topics.sh
+    entrypoint: ["/bin/bash", "/scripts/init-topics.sh"]
+    networks:
+      - crypto-network
+
+  # ============================================
+  # SPARK CLUSTER
+  # ============================================
 
   # Spark Master
   spark-master:
@@ -80,6 +108,7 @@ services:
       - spark-logs:/opt/spark/logs
     networks:
       - crypto-network
+    restart: unless-stopped
 
   # Spark Worker
   spark-worker:
@@ -102,6 +131,86 @@ services:
       - spark-logs:/opt/spark/logs
     networks:
       - crypto-network
+    restart: unless-stopped
+
+  # Spark Streaming Application
+  spark-streaming:
+    build:
+      context: ..
+      dockerfile: docker/spark-app/Dockerfile
+    container_name: spark-streaming
+    depends_on:
+      - spark-master
+      - spark-worker
+      - kafka
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - SPARK_MASTER=spark://spark-master:7077
+    volumes:
+      - ../data:/opt/spark-data
+      - ../config:/opt/spark-apps/config:ro
+    networks:
+      - crypto-network
+    restart: unless-stopped
+
+  # ============================================
+  # DATA PRODUCERS
+  # ============================================
+
+  # Binance WebSocket Producer
+  binance-producer:
+    build:
+      context: ..
+      dockerfile: docker/producer/Dockerfile
+    container_name: binance-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - LOG_LEVEL=INFO
+    command: ["python", "-m", "src.ingestion.binance_producer"]
+    networks:
+      - crypto-network
+    restart: unless-stopped
+
+  # Coinbase WebSocket Producer
+  coinbase-producer:
+    build:
+      context: ..
+      dockerfile: docker/producer/Dockerfile
+    container_name: coinbase-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - LOG_LEVEL=INFO
+    command: ["python", "-m", "src.ingestion.coinbase_producer"]
+    networks:
+      - crypto-network
+    restart: unless-stopped
+
+  # Kraken WebSocket Producer
+  kraken-producer:
+    build:
+      context: ..
+      dockerfile: docker/producer/Dockerfile
+    container_name: kraken-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - LOG_LEVEL=INFO
+    command: ["python", "-m", "src.ingestion.kraken_producer"]
+    networks:
+      - crypto-network
+    restart: unless-stopped
+
+  # ============================================
+  # AIRFLOW (OPTIONAL - FOR MONITORING)
+  # ============================================
 
   # PostgreSQL for Airflow
   postgres:
@@ -121,6 +230,7 @@ services:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 5s
       retries: 5
+    restart: unless-stopped
 
   # Airflow Webserver
   airflow-webserver:
@@ -156,6 +266,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    restart: unless-stopped
 
   # Airflow Scheduler
   airflow-scheduler:
@@ -184,6 +295,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+    restart: unless-stopped
 
 networks:
   crypto-network:
