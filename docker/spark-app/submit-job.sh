@@ -31,7 +31,7 @@ sleep 10
 
 echo "Submitting Spark streaming job..."
 
-/opt/spark/bin/spark-submit \
+/opt/bitnami/spark/bin/spark-submit \
     --master spark://spark-master:7077 \
     --deploy-mode client \
     --name "crypto-streaming-pipeline" \

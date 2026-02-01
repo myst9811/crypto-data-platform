@@ -88,38 +88,39 @@ services:
 
   # Spark Master
   spark-master:
-    image: apache/spark-py:v3.5.0
+    image: bitnami/spark:latest
     container_name: spark-master
     hostname: spark-master
     ports:
       - "7077:7077"
       - "8081:8080"
     environment:
-      - SPARK_NO_DAEMONIZE=true
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
     volumes:
       - ../src:/opt/spark-apps
       - ../data:/opt/spark-data
-      - spark-logs:/opt/spark/logs
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     networks:
       - crypto-network
     restart: unless-stopped
 
   # Spark Worker
   spark-worker:
-    image: apache/spark-py:v3.5.0
+    image: bitnami/spark:latest
     container_name: spark-worker
     depends_on:
       - spark-master
     environment:
-      - SPARK_NO_DAEMONIZE=true
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
       - SPARK_WORKER_MEMORY=2G
       - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
     volumes:
       - ../src:/opt/spark-apps
       - ../data:/opt/spark-data
-      - spark-logs:/opt/spark/logs
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     networks:
       - crypto-network
     restart: unless-stopped
