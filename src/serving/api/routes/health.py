@@ -3,8 +3,7 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends
 from src.serving.api.schemas.common import HealthResponse
-from src.serving.api.dependencies import reader_dependency
-from src.serving.data_access.delta_reader import DeltaReader
+from src.serving.api.dependencies import reader_dependency, get_backend_info
 
 router = APIRouter(tags=["Health"])
 
@@ -26,7 +25,7 @@ async def health_check() -> HealthResponse:
 
 @router.get("/health/ready", response_model=HealthResponse)
 async def readiness_check(
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> HealthResponse:
     """
     Readiness probe - checks Delta Lake connectivity.
@@ -36,7 +35,9 @@ async def readiness_check(
     """
     try:
         components = reader.health_check()
-        all_healthy = any(components.values())  # At least one table should exist
+        backend = get_backend_info()
+        components["backend"] = backend["active_backend"]
+        all_healthy = any(v for k, v in components.items() if k != "backend")
 
         return HealthResponse(
             status="ready" if all_healthy else "degraded",
@@ -66,3 +67,14 @@ async def liveness_check() -> HealthResponse:
         timestamp=datetime.now(),
         version="1.0.0",
     )
+
+
+@router.get("/health/backend")
+async def backend_info() -> dict:
+    """
+    Get information about the data backend.
+
+    Returns:
+        Dict with backend availability info
+    """
+    return get_backend_info()
