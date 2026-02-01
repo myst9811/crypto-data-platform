@@ -11,7 +11,6 @@ from src.serving.api.schemas.vwap import (
     VWAPHistoryResponse,
 )
 from src.serving.api.schemas.common import WindowDurationListResponse
-from src.serving.data_access.delta_reader import DeltaReader
 
 router = APIRouter()
 
@@ -24,7 +23,7 @@ async def get_vwap(
         None, description="Window duration (1min, 5min, 15min, 1h)"
     ),
     limit: int = Query(100, ge=1, le=1000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> VWAPListResponse:
     """
     Get VWAP metrics.
@@ -66,7 +65,7 @@ async def get_vwap(
 
 @router.get("/windows", response_model=WindowDurationListResponse)
 async def get_windows(
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> WindowDurationListResponse:
     """Get list of available window durations."""
     return WindowDurationListResponse(windows=reader.get_available_windows())
@@ -80,7 +79,7 @@ async def get_symbol_vwap(
         None, description="Window duration (1min, 5min, 15min, 1h)"
     ),
     limit: int = Query(100, ge=1, le=1000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> VWAPListResponse:
     """Get VWAP metrics for a specific symbol."""
     try:
@@ -128,7 +127,7 @@ async def get_vwap_history(
     end: datetime = Query(..., description="End datetime"),
     window: str = Query("1min", description="Window duration"),
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> VWAPHistoryResponse:
     """Get historical VWAP data for a symbol."""
     try:
