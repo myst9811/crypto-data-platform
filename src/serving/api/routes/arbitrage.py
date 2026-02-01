@@ -11,7 +11,6 @@ from src.serving.api.schemas.arbitrage import (
     ActiveArbitrageResponse,
     ArbitrageHistoryResponse,
 )
-from src.serving.data_access.delta_reader import DeltaReader
 from src.serving.config import ServingConfig
 
 router = APIRouter()
@@ -24,7 +23,7 @@ async def get_arbitrage(
         None, ge=0, description="Minimum net profit percentage"
     ),
     limit: int = Query(100, ge=1, le=1000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> ArbitrageListResponse:
     """
     Get arbitrage opportunities.
@@ -77,7 +76,7 @@ async def get_active_arbitrage(
     max_age_seconds: int = Query(
         60, ge=1, le=300, description="Maximum age in seconds"
     ),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> ActiveArbitrageResponse:
     """
     Get currently viable arbitrage opportunities.
@@ -127,7 +126,7 @@ async def get_arbitrage_history(
     end: datetime = Query(..., description="End datetime"),
     symbol: Optional[str] = Query(None, description="Filter by trading pair"),
     limit: int = Query(1000, ge=1, le=10000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> ArbitrageHistoryResponse:
     """Get historical arbitrage opportunities."""
     try:
@@ -176,7 +175,7 @@ async def get_symbol_arbitrage(
     symbol: str,
     min_profit: Optional[float] = Query(None, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> ArbitrageListResponse:
     """Get arbitrage opportunities for a specific trading pair."""
     try:
