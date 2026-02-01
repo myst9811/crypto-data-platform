@@ -1,6 +1,6 @@
 services:
   # ============================================
-  # INFRASTRUCTURE
+  # INFRASTRUCTURE - CORE (Always needed)
   # ============================================
 
   # Zookeeper for Kafka
@@ -48,10 +48,11 @@ services:
       - crypto-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 5
+      start_period: 30s
 
   # Kafka UI for monitoring
   kafka-ui:
@@ -83,70 +84,7 @@ services:
       - crypto-network
 
   # ============================================
-  # SPARK CLUSTER
-  # ============================================
-
-  # Spark Master
-  spark-master:
-    image: bitnami/spark:latest
-    container_name: spark-master
-    hostname: spark-master
-    ports:
-      - "7077:7077"
-      - "8081:8080"
-    environment:
-      - SPARK_MODE=master
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-    volumes:
-      - ../src:/opt/spark-apps
-      - ../data:/opt/spark-data
-    networks:
-      - crypto-network
-    restart: unless-stopped
-
-  # Spark Worker
-  spark-worker:
-    image: bitnami/spark:latest
-    container_name: spark-worker
-    depends_on:
-      - spark-master
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=2G
-      - SPARK_WORKER_CORES=2
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-    volumes:
-      - ../src:/opt/spark-apps
-      - ../data:/opt/spark-data
-    networks:
-      - crypto-network
-    restart: unless-stopped
-
-  # Spark Streaming Application
-  spark-streaming:
-    build:
-      context: ..
-      dockerfile: docker/spark-app/Dockerfile
-    container_name: spark-streaming
-    depends_on:
-      - spark-master
-      - spark-worker
-      - kafka
-    environment:
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
-      - SPARK_MASTER=spark://spark-master:7077
-    volumes:
-      - ../data:/opt/spark-data
-      - ../config:/opt/spark-apps/config:ro
-    networks:
-      - crypto-network
-    restart: unless-stopped
-
-  # ============================================
-  # DATA PRODUCERS
+  # DATA PRODUCERS (Python-based, lightweight)
   # ============================================
 
   # Binance WebSocket Producer
@@ -200,95 +138,6 @@ services:
       - crypto-network
     restart: unless-stopped
 
-  # ============================================
-  # AIRFLOW (OPTIONAL - FOR MONITORING)
-  # ============================================
-
-  # PostgreSQL for Airflow
-  postgres:
-    image: postgres:14
-    container_name: postgres
-    environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: airflow
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    networks:
-      - crypto-network
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
-      interval: 5s
-      retries: 5
-    restart: unless-stopped
-
-  # Airflow Webserver
-  airflow-webserver:
-    image: apache/airflow:2.7.3-python3.11
-    container_name: airflow-webserver
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
-      AIRFLOW__CORE__FERNET_KEY: ''
-      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
-      AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
-      _AIRFLOW_DB_UPGRADE: 'true'
-      _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: admin
-      _AIRFLOW_WWW_USER_PASSWORD: admin
-    volumes:
-      - ../src/airflow/dags:/opt/airflow/dags
-      - ../src/airflow/plugins:/opt/airflow/plugins
-      - ../data:/opt/airflow/data
-      - airflow-logs:/opt/airflow/logs
-    ports:
-      - "8082:8080"
-    command: webserver
-    networks:
-      - crypto-network
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    restart: unless-stopped
-
-  # Airflow Scheduler
-  airflow-scheduler:
-    image: apache/airflow:2.7.3-python3.11
-    container_name: airflow-scheduler
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
-      AIRFLOW__CORE__FERNET_KEY: ''
-      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-      AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
-    volumes:
-      - ../src/airflow/dags:/opt/airflow/dags
-      - ../src/airflow/plugins:/opt/airflow/plugins
-      - ../data:/opt/airflow/data
-      - airflow-logs:/opt/airflow/logs
-    command: scheduler
-    networks:
-      - crypto-network
-    healthcheck:
-      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    restart: unless-stopped
-
 networks:
   crypto-network:
     driver: bridge
@@ -297,6 +146,3 @@ volumes:
   zookeeper-data:
   zookeeper-logs:
   kafka-data:
-  spark-logs:
-  postgres-data:
-  airflow-logs:
