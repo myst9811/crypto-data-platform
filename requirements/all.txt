@@ -1,0 +1,8 @@
+# Full installation - all dependencies
+# WARNING: Spark and Airflow have limited Windows support
+-r api.txt
+-r dashboard.txt
+-r ingestion.txt
+-r spark.txt
+-r airflow.txt
+-r dev.txt

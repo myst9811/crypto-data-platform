@@ -1,0 +1,7 @@
+# Apache Airflow dependencies
+# NOTE: Airflow is not officially supported on Windows
+# For Windows: Use WSL2, Docker, or skip this component
+-r base.txt
+
+apache-airflow==2.7.3
+apache-airflow-providers-apache-spark==4.3.0

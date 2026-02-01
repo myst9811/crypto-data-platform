@@ -1,44 +1,24 @@
-# Kafka
-kafka-python==2.0.2
-confluent-kafka==2.3.0
+# Crypto Data Platform - Modular Requirements
+#
+# RECOMMENDED: Install only what you need
+#
+# For Windows users (API + Dashboard only):
+#   pip install -r requirements/serving.txt
+#
+# For specific components:
+#   pip install -r requirements/base.txt       # Core utilities
+#   pip install -r requirements/api.txt        # FastAPI server
+#   pip install -r requirements/dashboard.txt  # Streamlit dashboard
+#   pip install -r requirements/ingestion.txt  # Kafka + WebSocket
+#   pip install -r requirements/spark.txt      # PySpark (WSL2/Docker recommended)
+#   pip install -r requirements/airflow.txt    # Airflow (WSL2/Docker recommended)
+#   pip install -r requirements/dev.txt        # Testing tools
+#
+# For full installation (Linux/WSL2/Docker):
+#   pip install -r requirements/all.txt
+#
+# ============================================================
 
-# Spark
-pyspark==3.5.0
-delta-spark==3.0.0
-
-# WebSocket clients
-websocket-client==1.6.4
-websockets==12.0
-
-# API & Web
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-streamlit==1.28.1
-python-socketio==5.10.0
-
-# Airflow
-apache-airflow==2.7.3
-apache-airflow-providers-apache-spark==4.3.0
-
-# Data processing
-pandas==2.1.3
-numpy==1.26.2
-pyarrow==14.0.1
-
-# Utilities
-pydantic==2.5.0
-python-dotenv==1.0.0
-pyyaml==6.0.1
-requests==2.31.0
-
-# Visualization
-plotly==5.18.0
-altair==5.1.2
-
-# Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-
-# Additional utilities
-python-json-logger==2.0.7
-watchdog==3.0.0
+# Default: Serving layer only (Windows-friendly)
+-r requirements/serving.txt
+-r requirements/dev.txt

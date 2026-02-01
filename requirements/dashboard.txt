@@ -1,0 +1,6 @@
+# Streamlit dashboard dependencies
+-r base.txt
+
+streamlit==1.28.1
+plotly==5.18.0
+altair==5.1.2

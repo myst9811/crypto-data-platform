@@ -1,0 +1,7 @@
+# Spark + Delta Lake dependencies
+# NOTE: PySpark has limited Windows support
+# For Windows: Consider using WSL2 or Docker
+-r base.txt
+
+pyspark==3.5.0
+delta-spark==3.0.0

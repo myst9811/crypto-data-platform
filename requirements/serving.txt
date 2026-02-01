@@ -1,0 +1,4 @@
+# API + Dashboard serving layer (Windows-friendly)
+# Use this to run the FastAPI server and Streamlit dashboard
+-r api.txt
+-r dashboard.txt

@@ -1,0 +1,7 @@
+# Data ingestion dependencies (Kafka + WebSocket)
+-r base.txt
+
+kafka-python==2.0.2
+confluent-kafka==2.3.0
+websocket-client==1.6.4
+websockets==12.0
