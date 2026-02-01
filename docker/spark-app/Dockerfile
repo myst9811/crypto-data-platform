@@ -1,4 +1,4 @@
-FROM bitnami/spark:3.5
+FROM apache/spark-py:v3.5.0
 
 USER root
 
@@ -21,8 +21,6 @@ RUN chmod +x /opt/spark-apps/submit-job.sh
 
 # Create data directories
 RUN mkdir -p /opt/spark-data/checkpoints /opt/spark-data/delta
-
-USER 1001
 
 WORKDIR /opt/spark-apps
 
