@@ -6,7 +6,7 @@ from pyspark.sql import DataFrame, Window
 from pyspark.sql.functions import (
     col, window, sum as spark_sum, count, avg, min as spark_min,
     max as spark_max, stddev, when, lit, dense_rank,
-    slice as spark_slice, aggregate
+    slice as spark_slice, aggregate, size
 )
 from pyspark.sql.types import DoubleType
 
@@ -295,7 +295,7 @@ def calculate_liquidity_metrics(
     # Count orderbook levels
     df = df.withColumn(
         "orderbook_levels",
-        (col("bids").size() + col("asks").size()).cast("int")
+        (size(col("bids")) + size(col("asks"))).cast("int")
     )
 
     # Add window columns for consistency (using timestamp as point-in-time)

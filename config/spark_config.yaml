@@ -46,6 +46,8 @@ kafka:
 
 # Delta Lake paths
 delta_lake:
+  base_path: "./data"
+
   bronze:
     trades: "./data/bronze/trades"
     orderbook: "./data/bronze/orderbook"
