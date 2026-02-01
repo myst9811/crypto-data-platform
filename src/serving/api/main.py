@@ -7,7 +7,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.serving.config import ServingConfig
-from src.serving.api.routes import health_router
+from src.serving.api.routes import (
+    health_router,
+    prices_router,
+    vwap_router,
+    volume_router,
+    liquidity_router,
+    arbitrage_router,
+)
 from src.serving.api.dependencies import shutdown
 
 # Configure logging
@@ -66,14 +73,11 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health_router, prefix=ServingConfig.API_PREFIX)
-
-# Import and include additional routers (will be added in next phase)
-# from src.serving.api.routes import prices_router, vwap_router, volume_router, liquidity_router, arbitrage_router
-# app.include_router(prices_router, prefix=f"{ServingConfig.API_PREFIX}/prices", tags=["Prices"])
-# app.include_router(vwap_router, prefix=f"{ServingConfig.API_PREFIX}/vwap", tags=["VWAP"])
-# app.include_router(volume_router, prefix=f"{ServingConfig.API_PREFIX}/volume", tags=["Volume"])
-# app.include_router(liquidity_router, prefix=f"{ServingConfig.API_PREFIX}/liquidity", tags=["Liquidity"])
-# app.include_router(arbitrage_router, prefix=f"{ServingConfig.API_PREFIX}/arbitrage", tags=["Arbitrage"])
+app.include_router(prices_router, prefix=f"{ServingConfig.API_PREFIX}/prices", tags=["Prices"])
+app.include_router(vwap_router, prefix=f"{ServingConfig.API_PREFIX}/vwap", tags=["VWAP"])
+app.include_router(volume_router, prefix=f"{ServingConfig.API_PREFIX}/volume", tags=["Volume"])
+app.include_router(liquidity_router, prefix=f"{ServingConfig.API_PREFIX}/liquidity", tags=["Liquidity"])
+app.include_router(arbitrage_router, prefix=f"{ServingConfig.API_PREFIX}/arbitrage", tags=["Arbitrage"])
 
 
 @app.get("/")
