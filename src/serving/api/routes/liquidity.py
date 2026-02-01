@@ -9,7 +9,6 @@ from src.serving.api.schemas.liquidity import (
     LiquidityListResponse,
     LiquidityRankingResponse,
 )
-from src.serving.data_access.delta_reader import DeltaReader
 
 router = APIRouter()
 
@@ -19,7 +18,7 @@ async def get_liquidity(
     symbol: Optional[str] = Query(None, description="Filter by trading symbol"),
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     limit: int = Query(100, ge=1, le=1000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> LiquidityListResponse:
     """
     Get liquidity metrics.
@@ -61,7 +60,7 @@ async def get_liquidity(
 @router.get("/rankings", response_model=LiquidityRankingResponse)
 async def get_liquidity_rankings(
     symbol: str = Query(..., description="Trading symbol"),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> LiquidityRankingResponse:
     """
     Get exchange rankings by liquidity score.
@@ -111,7 +110,7 @@ async def get_symbol_liquidity(
     symbol: str,
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     limit: int = Query(100, ge=1, le=1000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> LiquidityListResponse:
     """Get liquidity metrics for a specific symbol."""
     try:
