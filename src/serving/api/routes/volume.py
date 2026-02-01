@@ -11,7 +11,6 @@ from src.serving.api.schemas.volume import (
     MarketShareResponse,
     MarketShareListResponse,
 )
-from src.serving.data_access.delta_reader import DeltaReader
 
 router = APIRouter()
 
@@ -22,7 +21,7 @@ async def get_volume(
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     window: Optional[str] = Query(None, description="Window duration"),
     limit: int = Query(100, ge=1, le=1000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> VolumeListResponse:
     """
     Get volume aggregates.
@@ -64,7 +63,7 @@ async def get_volume(
 async def get_volume_rankings(
     symbol: str = Query(..., description="Trading symbol"),
     window: str = Query("1min", description="Window duration"),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> VolumeRankingResponse:
     """
     Get exchange rankings by volume for a symbol.
@@ -112,7 +111,7 @@ async def get_volume_rankings(
 async def get_market_share(
     symbol: str = Query(..., description="Trading symbol"),
     window: str = Query("1min", description="Window duration"),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> MarketShareListResponse:
     """
     Get market share by exchange for a symbol.
@@ -158,7 +157,7 @@ async def get_symbol_volume(
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     window: Optional[str] = Query(None, description="Window duration"),
     limit: int = Query(100, ge=1, le=1000),
-    reader: DeltaReader = Depends(reader_dependency),
+    reader=Depends(reader_dependency),
 ) -> VolumeListResponse:
     """Get volume aggregates for a specific symbol."""
     try:
