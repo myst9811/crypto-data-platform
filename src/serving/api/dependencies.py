@@ -1,32 +1,67 @@
 """FastAPI dependency injection for API routes."""
 
 from functools import lru_cache
-from typing import Generator
+from typing import Generator, Union
 import logging
-
-from pyspark.sql import SparkSession
+import os
 
 from src.serving.config import ServingConfig
-from src.serving.data_access.delta_reader import DeltaReader
 from src.serving.data_access.cache import DataCache, get_cache
 
 logger = logging.getLogger(__name__)
 
+# Check for available backends
+PYSPARK_AVAILABLE = False
+DELTALAKE_AVAILABLE = False
+
+try:
+    from pyspark.sql import SparkSession
+    PYSPARK_AVAILABLE = True
+except ImportError:
+    logger.info("PySpark not available")
+
+try:
+    from deltalake import DeltaTable
+    DELTALAKE_AVAILABLE = True
+except ImportError:
+    logger.info("deltalake package not available")
+
+# Import appropriate reader
+if PYSPARK_AVAILABLE:
+    from src.serving.data_access.delta_reader import DeltaReader
+    logger.info("Using PySpark-based DeltaReader")
+elif DELTALAKE_AVAILABLE:
+    from src.serving.data_access.pandas_delta_reader import PandasDeltaReader as DeltaReader
+    logger.info("Using pandas-based PandasDeltaReader (Spark-free mode)")
+else:
+    DeltaReader = None
+    logger.warning(
+        "No Delta Lake reader available. "
+        "Install either pyspark or deltalake package."
+    )
+
+# Type alias for reader
+ReaderType = Union["DeltaReader", None]
+
 # Global instances (singletons)
-_spark_session: SparkSession = None
-_delta_reader: DeltaReader = None
+_spark_session = None
+_delta_reader: ReaderType = None
 _cache: DataCache = None
 
 
-def get_spark_session() -> SparkSession:
+def get_spark_session():
     """
     Get or create singleton Spark session.
-
-    Returns:
-        SparkSession instance
+    Returns None if PySpark is not available.
     """
     global _spark_session
+
+    if not PYSPARK_AVAILABLE:
+        return None
+
     if _spark_session is None:
+        from pyspark.sql import SparkSession
+
         logger.info("Creating new Spark session for API")
         _spark_session = (
             SparkSession.builder.appName(ServingConfig.SPARK_APP_NAME)
@@ -60,24 +95,41 @@ def get_data_cache() -> DataCache:
     return _cache
 
 
-def get_delta_reader() -> DeltaReader:
+def get_delta_reader() -> ReaderType:
     """
     Get or create singleton DeltaReader instance.
+    Automatically selects PySpark or pandas-based reader.
 
     Returns:
-        DeltaReader instance
+        DeltaReader or PandasDeltaReader instance
     """
     global _delta_reader
+
+    if DeltaReader is None:
+        raise RuntimeError(
+            "No Delta Lake reader available. "
+            "Install pyspark (pip install -r requirements/spark.txt) "
+            "or deltalake (pip install deltalake)"
+        )
+
     if _delta_reader is None:
         logger.info("Creating new DeltaReader for API")
-        _delta_reader = DeltaReader(
-            spark=get_spark_session(),
-            cache=get_data_cache(),
-        )
+        cache = get_data_cache()
+
+        if PYSPARK_AVAILABLE:
+            # Use Spark-based reader
+            _delta_reader = DeltaReader(
+                spark=get_spark_session(),
+                cache=cache,
+            )
+        else:
+            # Use pandas-based reader
+            _delta_reader = DeltaReader(cache=cache)
+
     return _delta_reader
 
 
-def reader_dependency() -> Generator[DeltaReader, None, None]:
+def reader_dependency() -> Generator[ReaderType, None, None]:
     """
     FastAPI dependency for DeltaReader.
 
@@ -114,3 +166,14 @@ def shutdown():
         _cache = None
 
     logger.info("API dependencies cleaned up")
+
+
+def get_backend_info() -> dict:
+    """Get information about the current backend."""
+    return {
+        "pyspark_available": PYSPARK_AVAILABLE,
+        "deltalake_available": DELTALAKE_AVAILABLE,
+        "active_backend": "pyspark" if PYSPARK_AVAILABLE else (
+            "deltalake" if DELTALAKE_AVAILABLE else "none"
+        ),
+    }
