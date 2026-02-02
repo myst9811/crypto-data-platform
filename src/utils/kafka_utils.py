@@ -15,7 +15,7 @@ class KafkaProducerWrapper:
     def __init__(
         self,
         bootstrap_servers: str = "localhost:9092",
-        compression_type: str = "snappy",
+        compression_type: str = "gzip",
         **kwargs
     ):
         """

@@ -2,7 +2,14 @@
 
 from .logging_config import setup_logging, get_logger
 from .kafka_utils import KafkaProducerWrapper, KafkaConsumerWrapper
-from .delta_utils import DeltaLakeManager
+
+# Conditional import for Delta Lake (requires PySpark)
+try:
+    from .delta_utils import DeltaLakeManager
+    DELTA_AVAILABLE = True
+except ImportError:
+    DeltaLakeManager = None
+    DELTA_AVAILABLE = False
 
 __all__ = [
     'setup_logging',
@@ -10,4 +17,5 @@ __all__ = [
     'KafkaProducerWrapper',
     'KafkaConsumerWrapper',
     'DeltaLakeManager',
+    'DELTA_AVAILABLE',
 ]
