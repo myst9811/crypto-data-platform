@@ -23,35 +23,39 @@ async def health_check() -> HealthResponse:
     )
 
 
-@router.get("/health/ready", response_model=HealthResponse)
+@router.get("/health/ready")
 async def readiness_check(
     reader=Depends(reader_dependency),
-) -> HealthResponse:
+) -> dict:
     """
     Readiness probe - checks Delta Lake connectivity.
 
     Returns:
-        HealthResponse with component status
+        Dict with component status
     """
     try:
         components = reader.health_check()
         backend = get_backend_info()
-        components["backend"] = backend["active_backend"]
-        all_healthy = any(v for k, v in components.items() if k != "backend")
+        all_healthy = any(
+            v for k, v in components.items()
+            if isinstance(v, bool) and v
+        )
 
-        return HealthResponse(
-            status="ready" if all_healthy else "degraded",
-            timestamp=datetime.now(),
-            version="1.0.0",
-            components=components,
-        )
+        return {
+            "status": "ready" if all_healthy else "degraded",
+            "timestamp": datetime.now().isoformat(),
+            "version": "1.0.0",
+            "components": components,
+            "backend": backend["active_backend"],
+        }
     except Exception as e:
-        return HealthResponse(
-            status="unhealthy",
-            timestamp=datetime.now(),
-            version="1.0.0",
-            components={"error": str(e)},
-        )
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "version": "1.0.0",
+            "components": {},
+            "error": str(e),
+        }
 
 
 @router.get("/health/live", response_model=HealthResponse)

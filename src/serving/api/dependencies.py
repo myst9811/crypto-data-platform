@@ -11,14 +11,10 @@ from src.serving.data_access.cache import DataCache, get_cache
 logger = logging.getLogger(__name__)
 
 # Check for available backends
-PYSPARK_AVAILABLE = False
+# Always prefer the lightweight deltalake (pandas) reader for the API.
+# PySpark is reserved for the Spark Streaming job in a separate process.
+PYSPARK_AVAILABLE = False  # disabled for API — avoids JVM conflicts
 DELTALAKE_AVAILABLE = False
-
-try:
-    from pyspark.sql import SparkSession
-    PYSPARK_AVAILABLE = True
-except ImportError:
-    logger.info("PySpark not available")
 
 try:
     from deltalake import DeltaTable
@@ -26,13 +22,20 @@ try:
 except ImportError:
     logger.info("deltalake package not available")
 
+if not DELTALAKE_AVAILABLE:
+    try:
+        from pyspark.sql import SparkSession
+        PYSPARK_AVAILABLE = True
+    except ImportError:
+        logger.info("PySpark not available either")
+
 # Import appropriate reader
-if PYSPARK_AVAILABLE:
+if DELTALAKE_AVAILABLE:
+    from src.serving.data_access.pandas_delta_reader import PandasDeltaReader as DeltaReader
+    logger.info("Using pandas-based PandasDeltaReader (lightweight, no JVM)")
+elif PYSPARK_AVAILABLE:
     from src.serving.data_access.delta_reader import DeltaReader
     logger.info("Using PySpark-based DeltaReader")
-elif DELTALAKE_AVAILABLE:
-    from src.serving.data_access.pandas_delta_reader import PandasDeltaReader as DeltaReader
-    logger.info("Using pandas-based PandasDeltaReader (Spark-free mode)")
 else:
     DeltaReader = None
     logger.warning(
