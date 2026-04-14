@@ -52,10 +52,18 @@ class PriceDirectionLSTM(nn.Module):
         return self.sigmoid(self.fc(out)).squeeze(-1)
 
 
+MAX_ROWS = 50_000  # cap to avoid building 1M+ sequences from a large table
+
+
 def prepare_data():
     """Prepare sequences and labels from silver prices."""
     prices = load_silver_prices()
     prices = prices.sort_values("event_time").reset_index(drop=True)
+
+    # Use only the most recent rows — keeps memory manageable while
+    # using the freshest data for training.
+    if len(prices) > MAX_ROWS:
+        prices = prices.iloc[-MAX_ROWS:].reset_index(drop=True)
 
     # Compute needed features
     prices["log_return"] = np.log(prices["price"] / prices["price"].shift(1))
@@ -148,7 +156,7 @@ def train():
         })
 
         best_val_loss = float("inf")
-        epochs = 30
+        epochs = 10
 
         for epoch in range(epochs):
             # Train

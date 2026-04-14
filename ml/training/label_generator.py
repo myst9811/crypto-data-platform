@@ -12,6 +12,7 @@ def generate_labels(
     df: pd.DataFrame,
     execution_latency_ms: float = 200.0,
     spread_threshold: float = 0.0015,
+    percentile_fallback: float = 75.0,
 ) -> pd.DataFrame:
     """Add a `label` column to the feature DataFrame.
 
@@ -19,6 +20,11 @@ def generate_labels(
         df: Feature DataFrame with at least `event_time` and `spread_pct`.
         execution_latency_ms: How far ahead to look (milliseconds).
         spread_threshold: Spread must exceed this at T+latency for label=1.
+        percentile_fallback: If the fixed threshold produces no positive
+            examples (e.g. because market spreads are currently below the
+            threshold), fall back to labeling the top `percentile_fallback`%
+            of spreads as class 1.  This ensures the model always sees
+            both classes during training.
 
     Returns:
         DataFrame with `label` column appended (rows where label
@@ -45,6 +51,16 @@ def generate_labels(
     # Drop rows where future is not available (tail rows)
     df = df.dropna(subset=["future_spread_pct"]).copy()
     df = df.drop(columns=["future_spread_pct"])
+
+    # If the fixed threshold produces no positive examples, fall back to a
+    # percentile-based threshold so the model can learn something meaningful.
+    if df["label"].sum() == 0:
+        adaptive_threshold = df["spread_pct"].quantile(percentile_fallback / 100.0)
+        print(
+            f"[label_generator] No positives with threshold={spread_threshold:.4f}. "
+            f"Using {percentile_fallback}th-percentile threshold={adaptive_threshold:.6f} instead."
+        )
+        df["label"] = (df["spread_pct"] > adaptive_threshold).astype(int)
 
     return df
 
