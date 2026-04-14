@@ -1,42 +1,28 @@
 spark:
   app_name: "crypto-streaming-pipeline"
-  master: "spark://spark-master:7077"
+  master: "local[2]"
 
-  # Spark configuration
   config:
-    spark.executor.memory: "2g"
-    spark.driver.memory: "1g"
-    spark.executor.cores: 2
-    spark.sql.streaming.checkpointLocation: "/opt/spark-data/checkpoints"
+    spark.driver.memory: "2g"
+    spark.sql.shuffle.partitions: 4
     spark.sql.streaming.schemaInference: "true"
-    spark.sql.shuffle.partitions: 10
-
-    # Delta Lake configurations
     spark.sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
     spark.sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
     spark.databricks.delta.retentionDurationCheck.enabled: "false"
     spark.databricks.delta.schema.autoMerge.enabled: "true"
-
-    # Kafka configurations
     spark.streaming.kafka.maxRatePerPartition: 100
     spark.streaming.backpressure.enabled: "true"
-
-    # Serialization
     spark.serializer: "org.apache.spark.serializer.KryoSerializer"
 
-# Streaming configurations
 streaming:
   trigger:
     processing_time: "10 seconds"
-
   watermark:
-    delay: "30 seconds"
-
+    delay: "10 seconds"
   batch_size: 1000
-
   output_mode: "append"
 
-# Kafka source configuration - Docker network addresses
+# Docker networking — Kafka on internal hostname
 kafka:
   bootstrap_servers: "kafka:29092"
   subscribe: "raw-trades,raw-orderbook,raw-ticker"
@@ -44,57 +30,31 @@ kafka:
   fail_on_data_loss: "false"
   max_offsets_per_trigger: 10000
 
-# Delta Lake paths - Docker volume paths
 delta_lake:
-  base_path: "/opt/spark-data"
-
+  base_path: "./data"
   bronze:
-    trades: "/opt/spark-data/bronze/trades"
-    orderbook: "/opt/spark-data/bronze/orderbook"
-    ticker: "/opt/spark-data/bronze/ticker"
-
+    trades: "./data/bronze/trades"
+    ticker: "./data/bronze/ticker"
   silver:
-    trades: "/opt/spark-data/silver/trades"
-    orderbook: "/opt/spark-data/silver/orderbook"
-    ticker: "/opt/spark-data/silver/ticker"
-    normalized_prices: "/opt/spark-data/silver/normalized_prices"
-
+    prices: "./data/silver/prices"
   gold:
-    arbitrage_opportunities: "/opt/spark-data/gold/arbitrage_opportunities"
-    volume_aggregates: "/opt/spark-data/gold/volume_aggregates"
-    liquidity_metrics: "/opt/spark-data/gold/liquidity_metrics"
-    vwap: "/opt/spark-data/gold/vwap"
-
+    vwap: "./data/gold/vwap"
+    spreads: "./data/gold/spreads"
+    arbitrage_signals: "./data/gold/arbitrage_signals"
   checkpoints:
-    bronze: "/opt/spark-data/checkpoints/bronze"
-    silver: "/opt/spark-data/checkpoints/silver"
-    gold: "/opt/spark-data/checkpoints/gold"
+    bronze: "./data/checkpoints/bronze"
+    silver: "./data/checkpoints/silver"
+    gold: "./data/checkpoints/gold"
 
-# Window configurations for aggregations
 windows:
   minute_1:
     duration: "1 minute"
-    slide: "30 seconds"
 
-  minute_5:
-    duration: "5 minutes"
-    slide: "1 minute"
-
-  minute_15:
-    duration: "15 minutes"
-    slide: "5 minutes"
-
-  hour_1:
-    duration: "1 hour"
-    slide: "15 minutes"
-
-# Arbitrage detection configuration
 arbitrage:
-  threshold_percent: 0.5
-  min_volume: 1.0
+  threshold_percent: 0.15
+  min_volume: 0.01
   max_spread_age_seconds: 10
 
-# Data quality thresholds
 data_quality:
   max_null_percentage: 5
   max_outlier_std_dev: 3
