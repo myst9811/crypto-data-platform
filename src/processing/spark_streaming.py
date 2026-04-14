@@ -4,9 +4,16 @@ Reads from Kafka, writes Bronze/Silver/Gold Delta Lake tables in local mode.
 """
 
 import logging
+import os
 import signal
 import sys
 import yaml
+
+# Pin PySpark workers to the same Python interpreter as the driver.
+# Without this, Spark may spawn workers using the system Python (different
+# version) instead of the venv Python, causing PYTHON_VERSION_MISMATCH errors.
+os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from pyspark.sql import SparkSession, DataFrame
@@ -418,69 +425,57 @@ class CryptoStreamingApp:
             if batch_df.isEmpty():
                 return
 
-            from pyspark.sql.functions import col as c
-            from itertools import combinations
+            import pandas as pd
 
-            # Get distinct window+symbol+exchange combinations
+            # Convert to pandas — batches are small (few rows per window).
+            # This avoids PySpark self-join column-ID ambiguity entirely.
+            pdf = batch_df.toPandas()
+            pdf["window_start"] = pdf["w"].apply(lambda x: x["start"])
+            pdf["window_end"] = pdf["w"].apply(lambda x: x["end"])
+
             agg = (
-                batch_df.groupBy("w", "symbol", "exchange")
-                .agg(
-                    avg("avg_price").alias("price"),
-                    spark_sum("total_volume").alias("volume"),
-                )
+                pdf.groupby(["window_start", "window_end", "symbol", "exchange"])
+                .agg(price=("avg_price", "mean"), volume=("total_volume", "sum"))
+                .reset_index()
             )
 
-            # Self-join for cross-exchange pairs
-            a = agg.alias("a")
-            b = agg.alias("b")
-            spreads = (
-                a.join(
-                    b,
-                    (col("a.w") == col("b.w"))
-                    & (col("a.symbol") == col("b.symbol"))
-                    & (col("a.exchange") < col("b.exchange")),
-                )
-                .select(
-                    col("a.symbol").alias("symbol"),
-                    col("a.exchange").alias("exchange_a"),
-                    col("b.exchange").alias("exchange_b"),
-                    col("a.price").alias("price_a"),
-                    col("b.price").alias("price_b"),
-                    (col("b.price") - col("a.price")).alias("spread_abs_raw"),
-                    col("a.w.start").alias("window_start"),
-                    col("a.w.end").alias("window_end"),
-                )
-            )
+            rows = []
+            for (ws, we, sym), grp in agg.groupby(
+                ["window_start", "window_end", "symbol"]
+            ):
+                exch_list = grp.to_dict("records")
+                for i, ea in enumerate(exch_list):
+                    for eb in exch_list[i + 1:]:
+                        if ea["exchange"] > eb["exchange"]:
+                            ea, eb = eb, ea
+                        spread_abs = abs(eb["price"] - ea["price"])
+                        min_p = min(ea["price"], eb["price"])
+                        spread_pct = spread_abs / min_p if min_p > 0 else 0.0
+                        rows.append({
+                            "symbol": sym,
+                            "exchange_a": ea["exchange"],
+                            "exchange_b": eb["exchange"],
+                            "price_a": float(ea["price"]),
+                            "price_b": float(eb["price"]),
+                            "spread_abs": float(spread_abs),
+                            "spread_pct": float(spread_pct),
+                            "event_time": we,
+                            "window_start": ws,
+                            "window_end": we,
+                        })
 
-            from pyspark.sql.functions import abs as spark_abs
+            if not rows:
+                return
 
-            spreads = spreads.withColumn(
-                "spread_abs", spark_abs(col("spread_abs_raw"))
+            result_pdf = pd.DataFrame(rows)
+            result_df = batch_df.sparkSession.createDataFrame(result_pdf)
+            (
+                result_df.write
+                .format("delta")
+                .mode("append")
+                .option("mergeSchema", "true")
+                .save("data/gold/spreads")
             )
-            spreads = spreads.withColumn(
-                "spread_pct",
-                when(
-                    spark_min(col("price_a"), col("price_b")) > 0,
-                    col("spread_abs")
-                    / spark_min(col("price_a"), col("price_b")),
-                ).otherwise(lit(0.0)),
-            )
-            spreads = spreads.withColumn("event_time", col("window_end"))
-
-            spreads = spreads.select(
-                "symbol", "exchange_a", "exchange_b",
-                "price_a", "price_b", "spread_abs", "spread_pct",
-                "event_time", "window_start", "window_end",
-            )
-
-            if spreads.count() > 0:
-                (
-                    spreads.write
-                    .format("delta")
-                    .mode("append")
-                    .option("mergeSchema", "true")
-                    .save("data/gold/spreads")
-                )
 
         self._ensure_dirs("data/gold/spreads", "data/checkpoints/gold/spreads")
         q = (
@@ -517,70 +512,62 @@ class CryptoStreamingApp:
             if batch_df.isEmpty():
                 return
 
+            import pandas as pd
+            from datetime import datetime as _dt
+
+            # Use pandas for cross-exchange comparison — avoids PySpark self-join
+            # column-ID ambiguity. Batches are small so pandas is fine here.
+            pdf = batch_df.toPandas()
+            pdf["window_start"] = pdf["w"].apply(lambda x: x["start"])
+            pdf["window_end"] = pdf["w"].apply(lambda x: x["end"])
+
             agg = (
-                batch_df.groupBy("w", "symbol", "exchange")
-                .agg(
-                    avg("avg_price").alias("price"),
-                    spark_sum("total_volume").alias("volume"),
-                )
+                pdf.groupby(["window_start", "window_end", "symbol", "exchange"])
+                .agg(price=("avg_price", "mean"), volume=("total_volume", "sum"))
+                .reset_index()
             )
 
-            a = agg.alias("a")
-            b = agg.alias("b")
-            spreads = (
-                a.join(
-                    b,
-                    (col("a.w") == col("b.w"))
-                    & (col("a.symbol") == col("b.symbol"))
-                    & (col("a.exchange") < col("b.exchange")),
-                )
-                .select(
-                    col("a.symbol").alias("symbol"),
-                    col("a.exchange").alias("exchange_a"),
-                    col("b.exchange").alias("exchange_b"),
-                    col("a.price").alias("price_a"),
-                    col("b.price").alias("price_b"),
-                    col("a.w.start").alias("window_start"),
-                    col("a.w.end").alias("window_end"),
-                )
-            )
+            rows = []
+            now = _dt.utcnow()
+            for (ws, we, sym), grp in agg.groupby(
+                ["window_start", "window_end", "symbol"]
+            ):
+                exch_list = grp.to_dict("records")
+                for i, ea in enumerate(exch_list):
+                    for eb in exch_list[i + 1:]:
+                        if ea["exchange"] > eb["exchange"]:
+                            ea, eb = eb, ea
+                        spread_abs = abs(eb["price"] - ea["price"])
+                        min_p = min(ea["price"], eb["price"])
+                        spread_pct = spread_abs / min_p if min_p > 0 else 0.0
+                        # Only emit signals above 0.15% threshold
+                        if spread_pct > 0.0015:
+                            rows.append({
+                                "symbol": sym,
+                                "exchange_a": ea["exchange"],
+                                "exchange_b": eb["exchange"],
+                                "price_a": float(ea["price"]),
+                                "price_b": float(eb["price"]),
+                                "spread_abs": float(spread_abs),
+                                "spread_pct": float(spread_pct),
+                                "event_time": we,
+                                "window_start": ws,
+                                "window_end": we,
+                                "signal_timestamp": now,
+                            })
 
-            from pyspark.sql.functions import abs as spark_abs
+            if not rows:
+                return
 
-            spreads = spreads.withColumn(
-                "spread_abs",
-                spark_abs(col("price_b") - col("price_a")),
+            result_pdf = pd.DataFrame(rows)
+            result_df = batch_df.sparkSession.createDataFrame(result_pdf)
+            (
+                result_df.write
+                .format("delta")
+                .mode("append")
+                .option("mergeSchema", "true")
+                .save("data/gold/arbitrage_signals")
             )
-            spreads = spreads.withColumn(
-                "spread_pct",
-                when(
-                    spark_min(col("price_a"), col("price_b")) > 0,
-                    col("spread_abs")
-                    / spark_min(col("price_a"), col("price_b")),
-                ).otherwise(lit(0.0)),
-            )
-            spreads = spreads.withColumn("event_time", col("window_end"))
-
-            # Filter: spread_pct > 0.0015 (0.15%)
-            signals = spreads.filter(col("spread_pct") > 0.0015)
-            signals = signals.withColumn(
-                "signal_timestamp", current_timestamp()
-            )
-            signals = signals.select(
-                "symbol", "exchange_a", "exchange_b",
-                "price_a", "price_b", "spread_abs", "spread_pct",
-                "event_time", "window_start", "window_end",
-                "signal_timestamp",
-            )
-
-            if signals.count() > 0:
-                (
-                    signals.write
-                    .format("delta")
-                    .mode("append")
-                    .option("mergeSchema", "true")
-                    .save("data/gold/arbitrage_signals")
-                )
 
         self._ensure_dirs(
             "data/gold/arbitrage_signals",
