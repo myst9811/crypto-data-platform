@@ -6,6 +6,7 @@ from .vwap import router as vwap_router
 from .volume import router as volume_router
 from .liquidity import router as liquidity_router
 from .arbitrage import router as arbitrage_router
+from .ml import router as ml_router
 
 __all__ = [
     "health_router",
@@ -14,4 +15,5 @@ __all__ = [
     "volume_router",
     "liquidity_router",
     "arbitrage_router",
+    "ml_router",
 ]

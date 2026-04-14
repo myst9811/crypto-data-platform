@@ -14,6 +14,7 @@ from src.serving.api.routes import (
     volume_router,
     liquidity_router,
     arbitrage_router,
+    ml_router,
 )
 from src.serving.api.dependencies import shutdown
 
@@ -78,6 +79,7 @@ app.include_router(vwap_router, prefix=f"{ServingConfig.API_PREFIX}/vwap", tags=
 app.include_router(volume_router, prefix=f"{ServingConfig.API_PREFIX}/volume", tags=["Volume"])
 app.include_router(liquidity_router, prefix=f"{ServingConfig.API_PREFIX}/liquidity", tags=["Liquidity"])
 app.include_router(arbitrage_router, prefix=f"{ServingConfig.API_PREFIX}/arbitrage", tags=["Arbitrage"])
+app.include_router(ml_router, prefix=ServingConfig.API_PREFIX, tags=["ML Predictions"])
 
 
 @app.get("/")
