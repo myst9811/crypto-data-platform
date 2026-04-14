@@ -46,6 +46,11 @@ airflow.db
 airflow.cfg
 unittests.cfg
 
+# ML artifacts
+ml/artifacts/
+mlruns/
+data/features/
+
 # Spark
 metastore_db/
 spark-warehouse/

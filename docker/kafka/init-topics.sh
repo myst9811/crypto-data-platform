@@ -41,6 +41,18 @@ kafka-topics --create \
 
 echo "Created topic: raw-ticker"
 
+# Create dead-letter topic
+kafka-topics --create \
+  --if-not-exists \
+  --bootstrap-server kafka:29092 \
+  --topic raw-dead-letter \
+  --partitions 1 \
+  --replication-factor 1 \
+  --config retention.ms=3600000 \
+  --config compression.type=snappy
+
+echo "Created topic: raw-dead-letter"
+
 # List all topics
 echo ""
 echo "Available topics:"

@@ -53,6 +53,13 @@ class BaseProducer(ABC):
         self.retry_count = 0
         self.is_running = False
 
+        # Required fields per message type for schema validation
+        self._required_fields = {
+            "trade": ["type", "symbol", "price", "volume"],
+            "orderbook": ["type", "symbol"],
+            "ticker": ["type", "symbol", "last_price"],
+        }
+
         logger.info(f"{self.exchange_name} producer initialized")
 
     @abstractmethod
@@ -128,6 +135,32 @@ class BaseProducer(ABC):
             parsed_data = self.parse_message(raw_data)
 
             if parsed_data:
+                # Determine Kafka topic
+                message_type = parsed_data.get('type', 'unknown')
+
+                # Schema validation: check required fields
+                required = self._required_fields.get(message_type, [])
+                missing = [f for f in required if f not in parsed_data or parsed_data[f] is None]
+
+                if missing:
+                    # Publish to dead-letter topic
+                    dead_letter = {
+                        'original_data': parsed_data,
+                        'exchange': self.exchange_name,
+                        'error_reason': f"Missing required fields: {missing}",
+                        'ingestion_timestamp': datetime.utcnow().isoformat(),
+                    }
+                    self.kafka_producer.send(
+                        topic='raw-dead-letter',
+                        value=dead_letter,
+                        key=parsed_data.get('symbol', None),
+                    )
+                    logger.warning(
+                        f"{self.exchange_name} validation failed, "
+                        f"sent to dead-letter: missing {missing}"
+                    )
+                    return
+
                 # Add metadata
                 enriched_data = {
                     **parsed_data,
@@ -136,8 +169,6 @@ class BaseProducer(ABC):
                     'raw_message': raw_data
                 }
 
-                # Determine Kafka topic
-                message_type = parsed_data.get('type', 'unknown')
                 topic = self.get_kafka_topic(message_type)
 
                 # Send to Kafka
