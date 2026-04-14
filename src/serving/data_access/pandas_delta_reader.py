@@ -53,10 +53,19 @@ class PandasDeltaReader:
         logger.info("PandasDeltaReader initialized (Spark-free mode)")
 
     def _read_delta(self, path: str) -> pd.DataFrame:
-        """Read Delta table to pandas DataFrame."""
+        """Read Delta table to pandas DataFrame with column harmonization."""
         try:
             dt = DeltaTable(path)
-            return dt.to_pandas()
+            df = dt.to_pandas()
+
+            # Harmonize column names: new pipeline uses 'symbol'/'event_time',
+            # but the API layer expects 'standard_symbol'/'timestamp'.
+            if "symbol" in df.columns and "standard_symbol" not in df.columns:
+                df["standard_symbol"] = df["symbol"]
+            if "event_time" in df.columns and "timestamp" not in df.columns:
+                df["timestamp"] = df["event_time"]
+
+            return df
         except Exception as e:
             logger.error(f"Failed to read Delta table at {path}: {e}")
             return pd.DataFrame()

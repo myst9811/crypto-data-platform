@@ -21,7 +21,7 @@ placeholder = st.empty()
 
 def fetch_prices():
     try:
-        r = requests.get(f"{API}/prices/latest", timeout=5)
+        r = requests.get(f"{API}/prices", params={"limit": 200}, timeout=5)
         if r.status_code == 200:
             return r.json()
     except Exception:
@@ -29,31 +29,41 @@ def fetch_prices():
     return None
 
 
-# Auto-refresh loop
-for _ in range(300):  # 10 min max
+for _ in range(300):
     data = fetch_prices()
     with placeholder.container():
         if data is None:
             st.warning("API not reachable or no price data yet.")
         else:
-            prices = data if isinstance(data, list) else data.get("data", [])
+            prices = data.get("data", []) if isinstance(data, dict) else data
             if prices:
                 df = pd.DataFrame(prices)
-                if "exchange" in df.columns and "price" in df.columns:
-                    for exch in df["exchange"].unique():
-                        st.subheader(f"{exch.title()}")
-                        exch_df = df[df["exchange"] == exch]
-                        st.line_chart(
-                            exch_df.set_index(
-                                exch_df.columns[
-                                    exch_df.columns.str.contains("symbol|standard")
-                                ][0]
-                                if any(exch_df.columns.str.contains("symbol|standard"))
-                                else exch_df.index
-                            )[["price"]],
+
+                # Summary metrics
+                if "symbol" in df.columns:
+                    symbols = df["symbol"].unique()
+                    cols = st.columns(min(len(symbols), 5))
+                    for i, sym in enumerate(symbols[:5]):
+                        sym_df = df[df["symbol"] == sym]
+                        latest_price = sym_df["price"].iloc[0] if len(sym_df) > 0 else 0
+                        with cols[i]:
+                            st.metric(sym, f"${latest_price:,.2f}")
+
+                st.divider()
+
+                # Price table per exchange
+                exchanges = df["exchange"].unique() if "exchange" in df.columns else []
+                for exch in exchanges:
+                    exch_df = df[df["exchange"] == exch].copy()
+                    st.subheader(f"{exch.title()}")
+
+                    if "symbol" in exch_df.columns and "price" in exch_df.columns:
+                        # Pivot: one column per symbol
+                        pivot = exch_df.groupby("symbol")["price"].last()
+                        st.dataframe(
+                            pivot.to_frame("Latest Price").style.format("${:,.2f}"),
+                            use_container_width=True,
                         )
-                else:
-                    st.dataframe(df)
             else:
                 st.info("Waiting for price data...")
 
