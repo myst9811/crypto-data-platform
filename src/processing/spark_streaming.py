@@ -603,19 +603,54 @@ class CryptoStreamingApp:
     # Orchestration
     # ------------------------------------------------------------------
 
+    def _wait_for_silver(self, timeout_seconds: int = 120):
+        """Wait until the Silver prices Delta table has data."""
+        import time as _time
+        from pathlib import Path as _P
+        from delta import DeltaTable as _DT
+
+        logger.info("Waiting for Silver prices table to be ready...")
+        deadline = _time.time() + timeout_seconds
+        while _time.time() < deadline:
+            try:
+                if _P("data/silver/prices/_delta_log").exists():
+                    _DT.forPath(self.spark, "data/silver/prices")
+                    logger.info("Silver prices table is ready")
+                    return
+            except Exception:
+                pass
+            _time.sleep(5)
+
+        # If timeout, seed an empty table so Gold can start streaming
+        logger.warning("Silver table not ready in time — seeding empty schema")
+        from pyspark.sql.types import (
+            StructType as _ST, StructField as _SF,
+            StringType as _Str, DoubleType as _Dbl, TimestampType as _Ts,
+        )
+        schema = _ST([
+            _SF("symbol", _Str()), _SF("exchange", _Str()),
+            _SF("price", _Dbl()), _SF("volume", _Dbl()),
+            _SF("event_time", _Ts()),
+        ])
+        empty = self.spark.createDataFrame([], schema)
+        empty.write.format("delta").mode("overwrite").save("data/silver/prices")
+        logger.info("Seeded empty Silver prices table")
+
     def start(self):
         logger.info("Starting crypto streaming pipeline")
         self.spark = self._create_spark_session()
         self._setup_signal_handlers()
         self.is_running = True
 
-        # Start layers sequentially — Silver reads from Kafka directly,
-        # Gold reads from Silver Delta table written by the Silver stream.
+        # Bronze + Silver start first (both read from Kafka)
         bronze_qs = self._start_bronze()
         self.queries.extend(bronze_qs)
 
         silver_qs = self._start_silver()
         self.queries.extend(silver_qs)
+
+        # Wait for Silver to produce at least one batch before Gold starts
+        self._wait_for_silver(timeout_seconds=120)
 
         gold_qs = self._start_gold()
         self.queries.extend(gold_qs)
