@@ -1,4 +1,7 @@
-"""Main Spark Structured Streaming application for crypto data pipeline."""
+"""Main Spark Structured Streaming application for crypto data pipeline.
+
+Reads from Kafka, writes Bronze/Silver/Gold Delta Lake tables in local mode.
+"""
 
 import logging
 import signal
@@ -8,592 +11,669 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.streaming import StreamingQuery
-
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from processing.transformations import (
-    normalize_symbol, normalize_prices, add_data_quality_score,
-    detect_arbitrage_opportunities,
-    calculate_vwap, aggregate_volume, calculate_liquidity_metrics
+from pyspark.sql.functions import (
+    from_json, col, current_timestamp, lit, when, window,
+    to_timestamp, from_unixtime, udf,
+    sum as spark_sum, count, avg,
+    min as spark_min, max as spark_max, stddev,
+    row_number, desc,
 )
-from processing.transformations.normalizer import extract_currency_pair
-from storage.medallion import BronzeLayer, SilverLayer, GoldLayer
-from storage.delta_writer import DeltaWriter
+from pyspark.sql.types import (
+    StructType, StructField, StringType, DoubleType,
+    LongType, TimestampType, BooleanType,
+)
+from pyspark.sql.window import Window as SparkWindow
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
+
+TRADE_SCHEMA = StructType([
+    StructField("type", StringType(), True),
+    StructField("symbol", StringType(), False),
+    StructField("price", DoubleType(), False),
+    StructField("volume", DoubleType(), False),
+    StructField("timestamp", LongType(), True),
+    StructField("side", StringType(), True),
+    StructField("trade_id", LongType(), True),
+    StructField("exchange", StringType(), False),
+    StructField("ingestion_timestamp", StringType(), True),
+    StructField("raw_message", StringType(), True),
+])
+
+TICKER_SCHEMA = StructType([
+    StructField("type", StringType(), True),
+    StructField("symbol", StringType(), False),
+    StructField("last_price", DoubleType(), False),
+    StructField("open_price", DoubleType(), True),
+    StructField("high_price", DoubleType(), True),
+    StructField("low_price", DoubleType(), True),
+    StructField("volume", DoubleType(), True),
+    StructField("quote_volume", DoubleType(), True),
+    StructField("price_change", DoubleType(), True),
+    StructField("price_change_percent", DoubleType(), True),
+    StructField("timestamp", LongType(), True),
+    StructField("num_trades", LongType(), True),
+    StructField("exchange", StringType(), False),
+    StructField("best_bid", DoubleType(), True),
+    StructField("best_ask", DoubleType(), True),
+    StructField("vwap", DoubleType(), True),
+    StructField("ingestion_timestamp", StringType(), True),
+    StructField("raw_message", StringType(), True),
+])
+
+# ---------------------------------------------------------------------------
+# Symbol normalisation
+# ---------------------------------------------------------------------------
+
+SYMBOL_MAP = {
+    "binance": {
+        "BTCUSDT": "BTC/USD", "ETHUSDT": "ETH/USD",
+        "BNBUSDT": "BNB/USD", "SOLUSDT": "SOL/USD", "XRPUSDT": "XRP/USD",
+    },
+    "coinbase": {
+        "BTC-USD": "BTC/USD", "ETH-USD": "ETH/USD",
+        "SOL-USD": "SOL/USD", "XRP-USD": "XRP/USD",
+    },
+    "kraken": {
+        "XBT/USD": "BTC/USD", "XBTUSD": "BTC/USD",
+        "ETH/USD": "ETH/USD", "ETHUSD": "ETH/USD",
+        "SOL/USD": "SOL/USD", "SOLUSD": "SOL/USD",
+        "XRP/USD": "XRP/USD", "XRPUSD": "XRP/USD",
+    },
+}
+
+ALL_SYMBOLS: Dict[str, str] = {}
+for _exch_map in SYMBOL_MAP.values():
+    ALL_SYMBOLS.update(_exch_map)
+
+
+@udf(StringType())
+def _normalise_symbol(exchange: str, symbol: str) -> Optional[str]:
+    if not symbol or not exchange:
+        return None
+    mapping = SYMBOL_MAP.get(exchange.lower(), {})
+    return mapping.get(symbol.upper(), mapping.get(symbol, symbol))
+
+
+def normalise_symbol(df: DataFrame) -> DataFrame:
+    return df.withColumn(
+        "standard_symbol", _normalise_symbol(col("exchange"), col("symbol"))
+    )
+
+
+# =========================================================================
+# CryptoStreamingApp
+# =========================================================================
 
 class CryptoStreamingApp:
-    """
-    Main orchestrator for the crypto data streaming pipeline.
+    """Orchestrates Bronze -> Silver -> Gold medallion pipeline in local mode."""
 
-    Coordinates Bronze -> Silver -> Gold medallion architecture with:
-    - Kafka ingestion (Bronze)
-    - Normalization and quality checks (Silver)
-    - Aggregations and analytics (Gold)
-    """
+    JARS = ",".join([
+        "io.delta:delta-spark_2.12:3.1.0",
+        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1",
+    ])
 
     def __init__(self, config_path: str = "config/spark_config.yaml"):
-        """
-        Initialize the streaming application.
-
-        Args:
-            config_path: Path to YAML configuration file
-        """
         self.config = self._load_config(config_path)
         self.spark: Optional[SparkSession] = None
         self.queries: List[StreamingQuery] = []
         self.is_running = False
+        logger.info("CryptoStreamingApp initialised")
 
-        # Layer components (initialized in start())
-        self.bronze_layer: Optional[BronzeLayer] = None
-        self.silver_layer: Optional[SilverLayer] = None
-        self.gold_layer: Optional[GoldLayer] = None
-        self.delta_writer: Optional[DeltaWriter] = None
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
 
-        logger.info("CryptoStreamingApp initialized")
-
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
-        """Load configuration from YAML file."""
-        config_file = Path(config_path)
-        if not config_file.exists():
-            raise FileNotFoundError(f"Config file not found: {config_path}")
-
-        with open(config_file, 'r') as f:
-            config = yaml.safe_load(f)
-
-        logger.info(f"Configuration loaded from {config_path}")
-        return config
+    @staticmethod
+    def _load_config(config_path: str) -> Dict[str, Any]:
+        p = Path(config_path)
+        if not p.exists():
+            raise FileNotFoundError(f"Config not found: {config_path}")
+        with open(p) as f:
+            return yaml.safe_load(f)
 
     def _create_spark_session(self) -> SparkSession:
-        """
-        Create and configure SparkSession with Delta Lake support.
-
-        Returns:
-            Configured SparkSession
-        """
-        spark_config = self.config.get('spark', {})
-
-        builder = (
+        spark = (
             SparkSession.builder
-            .appName(spark_config.get('app_name', 'crypto-streaming-pipeline'))
+            .appName("crypto-streaming-pipeline")
+            .master("local[2]")
+            .config("spark.sql.extensions",
+                    "io.delta.sql.DeltaSparkSessionExtension")
+            .config("spark.sql.catalog.spark_catalog",
+                    "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            .config("spark.jars.packages", self.JARS)
+            .config("spark.sql.shuffle.partitions", "4")
+            .config("spark.databricks.delta.schema.autoMerge.enabled", "true")
+            .config("spark.databricks.delta.retentionDurationCheck.enabled",
+                    "false")
+            .config("spark.driver.memory", "2g")
+            .getOrCreate()
         )
-
-        # Set master if configured (otherwise use local[*] as default)
-        master = spark_config.get('master')
-        if master:
-            builder = builder.master(master)
-        else:
-            builder = builder.master("local[*]")
-
-        # Apply Spark configurations
-        for key, value in spark_config.get('config', {}).items():
-            builder = builder.config(key, str(value))
-
-        spark = builder.getOrCreate()
         spark.sparkContext.setLogLevel("WARN")
-
-        logger.info(f"SparkSession created: {spark.sparkContext.appName}")
+        logger.info("SparkSession created (local[2])")
         return spark
 
     def _setup_signal_handlers(self):
-        """Setup graceful shutdown handlers for SIGINT and SIGTERM."""
-        def shutdown_handler(signum, frame):
-            logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+        def _handler(signum, frame):
+            logger.info(f"Signal {signum} received — shutting down")
             self.stop()
             sys.exit(0)
+        signal.signal(signal.SIGINT, _handler)
+        signal.signal(signal.SIGTERM, _handler)
 
-        signal.signal(signal.SIGINT, shutdown_handler)
-        signal.signal(signal.SIGTERM, shutdown_handler)
-        logger.info("Signal handlers configured")
+    @staticmethod
+    def _ensure_dirs(*paths: str):
+        for p in paths:
+            Path(p).mkdir(parents=True, exist_ok=True)
 
-    def _initialize_layers(self):
-        """Initialize medallion architecture layers."""
-        self.bronze_layer = BronzeLayer(self.spark, self.config)
-        self.silver_layer = SilverLayer(self.spark, self.config)
-        self.gold_layer = GoldLayer(self.spark, self.config)
-        self.delta_writer = DeltaWriter(
-            base_path=self.config.get('delta_lake', {}).get('base_path', './data')
+    # ------------------------------------------------------------------
+    # Kafka reader
+    # ------------------------------------------------------------------
+
+    def _read_kafka(self, topics: str) -> DataFrame:
+        kafka_cfg = self.config.get("kafka", {})
+        return (
+            self.spark.readStream
+            .format("kafka")
+            .option("kafka.bootstrap.servers",
+                    kafka_cfg.get("bootstrap_servers", "localhost:9092"))
+            .option("subscribe", topics)
+            .option("startingOffsets",
+                    kafka_cfg.get("starting_offsets", "latest"))
+            .option("failOnDataLoss", "false")
+            .option("maxOffsetsPerTrigger",
+                    kafka_cfg.get("max_offsets_per_trigger", 10000))
+            .load()
         )
-        logger.info("Medallion layers initialized")
 
-    # ============================================================
-    # Bronze Layer Methods
-    # ============================================================
+    # ------------------------------------------------------------------
+    # BRONZE LAYER
+    # ------------------------------------------------------------------
 
-    def _start_bronze_streams(self) -> List[StreamingQuery]:
-        """
-        Start Bronze layer streams (Kafka ingestion).
+    def _start_bronze(self) -> List[StreamingQuery]:
+        logger.info("Starting Bronze layer streams")
+        queries: List[StreamingQuery] = []
 
-        Returns:
-            List of StreamingQuery objects for Bronze layer
-        """
-        logger.info("Starting Bronze layer streams...")
-        queries = []
+        raw = self._read_kafka("raw-trades,raw-ticker")
+        raw = raw.selectExpr(
+            "CAST(key AS STRING)", "CAST(value AS STRING)",
+            "topic", "timestamp AS kafka_timestamp",
+        )
 
-        # Read from Kafka
-        kafka_df = self.bronze_layer.read_from_kafka()
+        # --- Bronze trades ---
+        trades_raw = (
+            raw.filter(col("topic") == "raw-trades")
+            .withColumn("processing_timestamp", current_timestamp())
+        )
+        self._ensure_dirs("data/bronze/trades", "data/checkpoints/bronze/trades")
+        q = (
+            trades_raw.writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", "data/checkpoints/bronze/trades")
+            .option("mergeSchema", "true")
+            .trigger(processingTime="10 seconds")
+            .start("data/bronze/trades")
+        )
+        queries.append(q)
+        logger.info("Bronze trades stream started")
 
-        # Parse messages by topic
-        parsed_dfs = self.bronze_layer.parse_messages(kafka_df)
-
-        # Get checkpoint and trigger config
-        checkpoint_base = self.config.get('delta_lake', {}).get('checkpoints', {}).get('bronze', './data/checkpoints/bronze')
-        trigger_interval = self.config.get('streaming', {}).get('trigger', {}).get('processing_time', '10 seconds')
-
-        # Write each parsed stream to Bronze Delta tables
-        for topic_name, df in parsed_dfs.items():
-            checkpoint_path = f"{checkpoint_base}/{topic_name}"
-
-            query = self.delta_writer.write_to_bronze(
-                df=df,
-                topic_name=topic_name,
-                checkpoint_location=checkpoint_path,
-                trigger_interval=trigger_interval
-            )
-            queries.append(query)
-            logger.info(f"Bronze stream started: {topic_name}")
-
-        return queries
-
-    # ============================================================
-    # Silver Layer Methods
-    # ============================================================
-
-    def _start_silver_streams(self) -> List[StreamingQuery]:
-        """
-        Start Silver layer streams (normalization and quality).
-
-        Returns:
-            List of StreamingQuery objects for Silver layer
-        """
-        logger.info("Starting Silver layer streams...")
-        queries = []
-
-        checkpoint_base = self.config.get('delta_lake', {}).get('checkpoints', {}).get('silver', './data/checkpoints/silver')
-        trigger_interval = self.config.get('streaming', {}).get('trigger', {}).get('processing_time', '10 seconds')
-
-        # Process trades
-        trades_query = self._process_silver_trades(checkpoint_base, trigger_interval)
-        if trades_query:
-            queries.append(trades_query)
-
-        # Process orderbook
-        orderbook_query = self._process_silver_orderbook(checkpoint_base, trigger_interval)
-        if orderbook_query:
-            queries.append(orderbook_query)
-
-        # Process ticker
-        ticker_query = self._process_silver_ticker(checkpoint_base, trigger_interval)
-        if ticker_query:
-            queries.append(ticker_query)
+        # --- Bronze ticker ---
+        ticker_raw = (
+            raw.filter(col("topic") == "raw-ticker")
+            .withColumn("processing_timestamp", current_timestamp())
+        )
+        self._ensure_dirs("data/bronze/ticker", "data/checkpoints/bronze/ticker")
+        q = (
+            ticker_raw.writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", "data/checkpoints/bronze/ticker")
+            .option("mergeSchema", "true")
+            .trigger(processingTime="10 seconds")
+            .start("data/bronze/ticker")
+        )
+        queries.append(q)
+        logger.info("Bronze ticker stream started")
 
         return queries
 
-    def _process_silver_trades(self, checkpoint_base: str, trigger_interval: str) -> Optional[StreamingQuery]:
-        """Process trades through Silver layer transformations."""
-        try:
-            # Read from Bronze
-            df = self.silver_layer.read_from_bronze("trades")
+    # ------------------------------------------------------------------
+    # SILVER LAYER
+    # ------------------------------------------------------------------
 
-            # Clean and normalize
-            df = self.silver_layer.clean_and_normalize(df, "trades")
+    def _start_silver(self) -> List[StreamingQuery]:
+        logger.info("Starting Silver layer streams")
+        queries: List[StreamingQuery] = []
 
-            # Apply transformations
-            df = normalize_symbol(df)
-            df = normalize_prices(df)
-            df = add_data_quality_score(df)
-            df = extract_currency_pair(df)
+        raw = self._read_kafka("raw-trades,raw-ticker")
+        raw = raw.selectExpr(
+            "CAST(value AS STRING) AS json_value",
+            "topic",
+            "timestamp AS kafka_timestamp",
+        )
 
-            # Write to Silver
-            query = self.delta_writer.write_to_silver(
-                df=df,
-                data_type="normalized_prices",
-                checkpoint_location=f"{checkpoint_base}/normalized_prices",
-                partition_by=["standard_symbol"],
-                trigger_interval=trigger_interval
+        # --- Silver prices from trades ---
+        trades = (
+            raw.filter(col("topic") == "raw-trades")
+            .select(
+                from_json(col("json_value"), TRADE_SCHEMA).alias("d"),
+                col("kafka_timestamp"),
             )
+            .select("d.*", "kafka_timestamp")
+            .filter(col("price").isNotNull() & col("volume").isNotNull())
+        )
+        trades = normalise_symbol(trades)
+        trades = trades.withColumn(
+            "event_time",
+            when(
+                col("timestamp").isNotNull(),
+                to_timestamp(from_unixtime(col("timestamp") / 1000)),
+            ).otherwise(col("kafka_timestamp")),
+        )
+        prices_from_trades = trades.select(
+            col("standard_symbol").alias("symbol"),
+            col("exchange"),
+            col("price").cast(DoubleType()),
+            col("volume").cast(DoubleType()),
+            col("event_time"),
+        ).filter(col("symbol").isNotNull())
 
-            logger.info("Silver trades stream started")
-            return query
-
-        except Exception as e:
-            logger.error(f"Failed to start Silver trades stream: {e}")
-            return None
-
-    def _process_silver_orderbook(self, checkpoint_base: str, trigger_interval: str) -> Optional[StreamingQuery]:
-        """Process orderbook through Silver layer transformations."""
-        try:
-            df = self.silver_layer.read_from_bronze("orderbook")
-            df = self.silver_layer.clean_and_normalize(df, "orderbook")
-            df = normalize_symbol(df)
-
-            query = self.delta_writer.write_to_silver(
-                df=df,
-                data_type="orderbook",
-                checkpoint_location=f"{checkpoint_base}/orderbook",
-                partition_by=["standard_symbol"],
-                trigger_interval=trigger_interval
+        # --- Silver prices from ticker ---
+        ticker = (
+            raw.filter(col("topic") == "raw-ticker")
+            .select(
+                from_json(col("json_value"), TICKER_SCHEMA).alias("d"),
+                col("kafka_timestamp"),
             )
+            .select("d.*", "kafka_timestamp")
+            .filter(col("last_price").isNotNull())
+        )
+        ticker = normalise_symbol(ticker)
+        ticker = ticker.withColumn(
+            "event_time",
+            when(
+                col("timestamp").isNotNull(),
+                to_timestamp(from_unixtime(col("timestamp") / 1000)),
+            ).otherwise(col("kafka_timestamp")),
+        )
+        prices_from_ticker = ticker.select(
+            col("standard_symbol").alias("symbol"),
+            col("exchange"),
+            col("last_price").alias("price").cast(DoubleType()),
+            col("volume").cast(DoubleType()),
+            col("event_time"),
+        ).filter(col("symbol").isNotNull())
 
-            logger.info("Silver orderbook stream started")
-            return query
+        # Union both sources
+        prices = prices_from_trades.union(prices_from_ticker)
 
-        except Exception as e:
-            logger.error(f"Failed to start Silver orderbook stream: {e}")
-            return None
-
-    def _process_silver_ticker(self, checkpoint_base: str, trigger_interval: str) -> Optional[StreamingQuery]:
-        """Process ticker through Silver layer transformations."""
-        try:
-            df = self.silver_layer.read_from_bronze("ticker")
-            df = self.silver_layer.clean_and_normalize(df, "ticker")
-            df = normalize_symbol(df)
-
-            query = self.delta_writer.write_to_silver(
-                df=df,
-                data_type="ticker",
-                checkpoint_location=f"{checkpoint_base}/ticker",
-                partition_by=["standard_symbol"],
-                trigger_interval=trigger_interval
-            )
-
-            logger.info("Silver ticker stream started")
-            return query
-
-        except Exception as e:
-            logger.error(f"Failed to start Silver ticker stream: {e}")
-            return None
-
-    # ============================================================
-    # Gold Layer Methods
-    # ============================================================
-
-    def _start_gold_streams(self) -> List[StreamingQuery]:
-        """
-        Start Gold layer streams (aggregations and analytics).
-
-        Returns:
-            List of StreamingQuery objects for Gold layer
-        """
-        logger.info("Starting Gold layer streams...")
-        queries = []
-
-        checkpoint_base = self.config.get('delta_lake', {}).get('checkpoints', {}).get('gold', './data/checkpoints/gold')
-        trigger_interval = self.config.get('streaming', {}).get('trigger', {}).get('processing_time', '10 seconds')
-        watermark_delay = self.config.get('streaming', {}).get('watermark', {}).get('delay', '30 seconds')
-
-        # Get window configurations
-        windows_config = self.config.get('windows', {})
-
-        # VWAP calculations
-        vwap_query = self._process_gold_vwap(checkpoint_base, trigger_interval, watermark_delay, windows_config)
-        if vwap_query:
-            queries.append(vwap_query)
-
-        # Volume aggregations
-        volume_query = self._process_gold_volume(checkpoint_base, trigger_interval, watermark_delay, windows_config)
-        if volume_query:
-            queries.append(volume_query)
-
-        # Liquidity metrics
-        liquidity_query = self._process_gold_liquidity(checkpoint_base, trigger_interval, watermark_delay)
-        if liquidity_query:
-            queries.append(liquidity_query)
-
-        # Arbitrage detection
-        arbitrage_query = self._process_gold_arbitrage(checkpoint_base, trigger_interval, watermark_delay)
-        if arbitrage_query:
-            queries.append(arbitrage_query)
+        self._ensure_dirs("data/silver/prices", "data/checkpoints/silver/prices")
+        q = (
+            prices.writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", "data/checkpoints/silver/prices")
+            .option("mergeSchema", "true")
+            .trigger(processingTime="10 seconds")
+            .start("data/silver/prices")
+        )
+        queries.append(q)
+        logger.info("Silver prices stream started")
 
         return queries
 
-    def _process_gold_vwap(
-        self,
-        checkpoint_base: str,
-        trigger_interval: str,
-        watermark_delay: str,
-        windows_config: Dict
-    ) -> Optional[StreamingQuery]:
-        """Calculate VWAP metrics and write to Gold layer."""
-        try:
-            # Read normalized prices from Silver
-            df = self.gold_layer.read_from_silver("normalized_prices")
+    # ------------------------------------------------------------------
+    # GOLD LAYER
+    # ------------------------------------------------------------------
 
-            # Apply watermark
-            df = self.gold_layer.apply_watermark(df, "timestamp", watermark_delay)
+    def _start_gold(self) -> List[StreamingQuery]:
+        logger.info("Starting Gold layer streams")
+        queries: List[StreamingQuery] = []
 
-            # Calculate VWAP for primary window (1 minute)
-            primary_window = windows_config.get('minute_1', {})
-            vwap_df = calculate_vwap(
-                df=df,
-                window_duration=primary_window.get('duration', '1 minute'),
-                slide_duration=primary_window.get('slide'),
-                watermark_delay=watermark_delay
+        # Read silver prices as streaming source
+        self._ensure_dirs("data/silver/prices")
+        prices = (
+            self.spark.readStream
+            .format("delta")
+            .load("data/silver/prices")
+        )
+
+        # 10-second watermark on event_time
+        prices = prices.withWatermark("event_time", "10 seconds")
+
+        # ---- Gold #1: VWAP (1-min tumbling window per symbol per exchange) ----
+        vwap = (
+            prices
+            .withColumn("price_volume", col("price") * col("volume"))
+            .groupBy(
+                window(col("event_time"), "1 minute").alias("w"),
+                col("symbol"),
+                col("exchange"),
+            )
+            .agg(
+                (spark_sum("price_volume") / spark_sum("volume")).alias("vwap"),
+                spark_sum("volume").alias("total_volume"),
+                spark_sum("price_volume").alias("total_value"),
+                count("*").alias("num_trades"),
+                spark_min("price").alias("min_price"),
+                spark_max("price").alias("max_price"),
+                avg("price").alias("avg_price"),
+                stddev("price").alias("std_dev_price"),
+            )
+            .select(
+                col("symbol"), col("exchange"), col("vwap"),
+                col("total_volume"), col("total_value"), col("num_trades"),
+                col("min_price"), col("max_price"), col("avg_price"),
+                col("std_dev_price"),
+                col("w.start").alias("window_start"),
+                col("w.end").alias("window_end"),
+                lit("1 minute").alias("window_duration"),
+            )
+        )
+
+        self._ensure_dirs("data/gold/vwap", "data/checkpoints/gold/vwap")
+        q = (
+            vwap.writeStream
+            .format("delta")
+            .outputMode("append")
+            .option("checkpointLocation", "data/checkpoints/gold/vwap")
+            .option("mergeSchema", "true")
+            .trigger(processingTime="10 seconds")
+            .start("data/gold/vwap")
+        )
+        queries.append(q)
+        logger.info("Gold VWAP stream started")
+
+        # ---- Gold #2: Spreads (cross-exchange spread table) ----
+        # Re-read silver to get a separate streaming source for spreads
+        prices2 = (
+            self.spark.readStream
+            .format("delta")
+            .load("data/silver/prices")
+        ).withWatermark("event_time", "10 seconds")
+
+        # Get min-price and max-price exchanges per symbol per 1-min window
+        # using window function approach: self-join on windowed aggregates
+        price_agg = (
+            prices2.groupBy(
+                window(col("event_time"), "1 minute").alias("w"),
+                col("symbol"),
+                col("exchange"),
+            )
+            .agg(
+                avg("price").alias("avg_price"),
+                spark_sum("volume").alias("total_volume"),
+            )
+        )
+
+        # We need a cross-join of exchanges within each window+symbol
+        # Spark structured streaming doesn't support self-joins on streams easily.
+        # Instead, we use foreachBatch to compute spreads as a micro-batch operation.
+
+        def _compute_spreads(batch_df: DataFrame, batch_id: int):
+            if batch_df.isEmpty():
+                return
+
+            from pyspark.sql.functions import col as c
+            from itertools import combinations
+
+            # Get distinct window+symbol+exchange combinations
+            agg = (
+                batch_df.groupBy("w", "symbol", "exchange")
+                .agg(
+                    avg("avg_price").alias("price"),
+                    spark_sum("total_volume").alias("volume"),
+                )
             )
 
-            # Write to Gold layer
-            query = self.delta_writer.write_to_gold(
-                df=vwap_df,
-                metric_type="vwap",
-                checkpoint_location=f"{checkpoint_base}/vwap",
-                output_mode="append",
-                partition_by=["standard_symbol", "window_duration"],
-                trigger_interval=trigger_interval
+            # Self-join for cross-exchange pairs
+            a = agg.alias("a")
+            b = agg.alias("b")
+            spreads = (
+                a.join(
+                    b,
+                    (col("a.w") == col("b.w"))
+                    & (col("a.symbol") == col("b.symbol"))
+                    & (col("a.exchange") < col("b.exchange")),
+                )
+                .select(
+                    col("a.symbol").alias("symbol"),
+                    col("a.exchange").alias("exchange_a"),
+                    col("b.exchange").alias("exchange_b"),
+                    col("a.price").alias("price_a"),
+                    col("b.price").alias("price_b"),
+                    (col("b.price") - col("a.price")).alias("spread_abs_raw"),
+                    col("a.w.start").alias("window_start"),
+                    col("a.w.end").alias("window_end"),
+                )
             )
 
-            logger.info("Gold VWAP stream started")
-            return query
+            from pyspark.sql.functions import abs as spark_abs
 
-        except Exception as e:
-            logger.error(f"Failed to start Gold VWAP stream: {e}")
-            return None
+            spreads = spreads.withColumn(
+                "spread_abs", spark_abs(col("spread_abs_raw"))
+            )
+            spreads = spreads.withColumn(
+                "spread_pct",
+                when(
+                    spark_min(col("price_a"), col("price_b")) > 0,
+                    col("spread_abs")
+                    / spark_min(col("price_a"), col("price_b")),
+                ).otherwise(lit(0.0)),
+            )
+            spreads = spreads.withColumn("event_time", col("window_end"))
 
-    def _process_gold_volume(
-        self,
-        checkpoint_base: str,
-        trigger_interval: str,
-        watermark_delay: str,
-        windows_config: Dict
-    ) -> Optional[StreamingQuery]:
-        """Calculate volume aggregations and write to Gold layer."""
-        try:
-            df = self.gold_layer.read_from_silver("normalized_prices")
-            df = self.gold_layer.apply_watermark(df, "timestamp", watermark_delay)
-
-            primary_window = windows_config.get('minute_1', {})
-            vol_df = aggregate_volume(
-                df=df,
-                window_duration=primary_window.get('duration', '1 minute'),
-                slide_duration=primary_window.get('slide'),
-                watermark_delay=watermark_delay
+            spreads = spreads.select(
+                "symbol", "exchange_a", "exchange_b",
+                "price_a", "price_b", "spread_abs", "spread_pct",
+                "event_time", "window_start", "window_end",
             )
 
-            query = self.delta_writer.write_to_gold(
-                df=vol_df,
-                metric_type="volume_aggregates",
-                checkpoint_location=f"{checkpoint_base}/volume_aggregates",
-                output_mode="append",
-                partition_by=["standard_symbol"],
-                trigger_interval=trigger_interval
+            if spreads.count() > 0:
+                (
+                    spreads.write
+                    .format("delta")
+                    .mode("append")
+                    .option("mergeSchema", "true")
+                    .save("data/gold/spreads")
+                )
+
+        self._ensure_dirs("data/gold/spreads", "data/checkpoints/gold/spreads")
+        q = (
+            price_agg.writeStream
+            .foreachBatch(_compute_spreads)
+            .option("checkpointLocation", "data/checkpoints/gold/spreads")
+            .trigger(processingTime="10 seconds")
+            .start()
+        )
+        queries.append(q)
+        logger.info("Gold spreads stream started")
+
+        # ---- Gold #3: Arbitrage signals (spread_pct > 0.15%) ----
+        # Re-read silver again for a separate stream
+        prices3 = (
+            self.spark.readStream
+            .format("delta")
+            .load("data/silver/prices")
+        ).withWatermark("event_time", "10 seconds")
+
+        price_agg3 = (
+            prices3.groupBy(
+                window(col("event_time"), "1 minute").alias("w"),
+                col("symbol"),
+                col("exchange"),
+            )
+            .agg(
+                avg("price").alias("avg_price"),
+                spark_sum("volume").alias("total_volume"),
+            )
+        )
+
+        def _compute_arbitrage_signals(batch_df: DataFrame, batch_id: int):
+            if batch_df.isEmpty():
+                return
+
+            agg = (
+                batch_df.groupBy("w", "symbol", "exchange")
+                .agg(
+                    avg("avg_price").alias("price"),
+                    spark_sum("total_volume").alias("volume"),
+                )
             )
 
-            logger.info("Gold volume aggregation stream started")
-            return query
-
-        except Exception as e:
-            logger.error(f"Failed to start Gold volume stream: {e}")
-            return None
-
-    def _process_gold_liquidity(
-        self,
-        checkpoint_base: str,
-        trigger_interval: str,
-        watermark_delay: str
-    ) -> Optional[StreamingQuery]:
-        """Calculate liquidity metrics from orderbook data."""
-        try:
-            df = self.gold_layer.read_from_silver("orderbook")
-            df = self.gold_layer.apply_watermark(df, "timestamp", watermark_delay)
-
-            liquidity_df = calculate_liquidity_metrics(
-                df=df,
-                depth_levels=10,
-                watermark_delay=watermark_delay
+            a = agg.alias("a")
+            b = agg.alias("b")
+            spreads = (
+                a.join(
+                    b,
+                    (col("a.w") == col("b.w"))
+                    & (col("a.symbol") == col("b.symbol"))
+                    & (col("a.exchange") < col("b.exchange")),
+                )
+                .select(
+                    col("a.symbol").alias("symbol"),
+                    col("a.exchange").alias("exchange_a"),
+                    col("b.exchange").alias("exchange_b"),
+                    col("a.price").alias("price_a"),
+                    col("b.price").alias("price_b"),
+                    col("a.w.start").alias("window_start"),
+                    col("a.w.end").alias("window_end"),
+                )
             )
 
-            query = self.delta_writer.write_to_gold(
-                df=liquidity_df,
-                metric_type="liquidity_metrics",
-                checkpoint_location=f"{checkpoint_base}/liquidity_metrics",
-                output_mode="append",
-                partition_by=["standard_symbol", "exchange"],
-                trigger_interval=trigger_interval
+            from pyspark.sql.functions import abs as spark_abs
+
+            spreads = spreads.withColumn(
+                "spread_abs",
+                spark_abs(col("price_b") - col("price_a")),
+            )
+            spreads = spreads.withColumn(
+                "spread_pct",
+                when(
+                    spark_min(col("price_a"), col("price_b")) > 0,
+                    col("spread_abs")
+                    / spark_min(col("price_a"), col("price_b")),
+                ).otherwise(lit(0.0)),
+            )
+            spreads = spreads.withColumn("event_time", col("window_end"))
+
+            # Filter: spread_pct > 0.0015 (0.15%)
+            signals = spreads.filter(col("spread_pct") > 0.0015)
+            signals = signals.withColumn(
+                "signal_timestamp", current_timestamp()
+            )
+            signals = signals.select(
+                "symbol", "exchange_a", "exchange_b",
+                "price_a", "price_b", "spread_abs", "spread_pct",
+                "event_time", "window_start", "window_end",
+                "signal_timestamp",
             )
 
-            logger.info("Gold liquidity metrics stream started")
-            return query
+            if signals.count() > 0:
+                (
+                    signals.write
+                    .format("delta")
+                    .mode("append")
+                    .option("mergeSchema", "true")
+                    .save("data/gold/arbitrage_signals")
+                )
 
-        except Exception as e:
-            logger.error(f"Failed to start Gold liquidity stream: {e}")
-            return None
+        self._ensure_dirs(
+            "data/gold/arbitrage_signals",
+            "data/checkpoints/gold/arbitrage_signals",
+        )
+        q = (
+            price_agg3.writeStream
+            .foreachBatch(_compute_arbitrage_signals)
+            .option("checkpointLocation",
+                    "data/checkpoints/gold/arbitrage_signals")
+            .trigger(processingTime="10 seconds")
+            .start()
+        )
+        queries.append(q)
+        logger.info("Gold arbitrage signals stream started")
 
-    def _process_gold_arbitrage(
-        self,
-        checkpoint_base: str,
-        trigger_interval: str,
-        watermark_delay: str
-    ) -> Optional[StreamingQuery]:
-        """Detect arbitrage opportunities across exchanges."""
-        try:
-            df = self.gold_layer.read_from_silver("normalized_prices")
-            df = self.gold_layer.apply_watermark(df, "timestamp", watermark_delay)
+        return queries
 
-            # Get arbitrage config
-            arb_config = self.config.get('arbitrage', {})
-
-            arb_df = detect_arbitrage_opportunities(
-                df=df,
-                threshold_percent=arb_config.get('threshold_percent', 0.5),
-                min_volume=arb_config.get('min_volume', 1.0),
-                window_duration=f"{arb_config.get('max_spread_age_seconds', 10)} seconds"
-            )
-
-            query = self.delta_writer.write_to_gold(
-                df=arb_df,
-                metric_type="arbitrage_opportunities",
-                checkpoint_location=f"{checkpoint_base}/arbitrage_opportunities",
-                output_mode="append",
-                trigger_interval=trigger_interval
-            )
-
-            logger.info("Gold arbitrage detection stream started")
-            return query
-
-        except Exception as e:
-            logger.error(f"Failed to start Gold arbitrage stream: {e}")
-            return None
-
-    # ============================================================
-    # Main Orchestration Methods
-    # ============================================================
+    # ------------------------------------------------------------------
+    # Orchestration
+    # ------------------------------------------------------------------
 
     def start(self):
-        """
-        Start the complete streaming pipeline.
+        logger.info("Starting crypto streaming pipeline")
+        self.spark = self._create_spark_session()
+        self._setup_signal_handlers()
+        self.is_running = True
 
-        Initializes SparkSession, sets up layers, and starts all streams.
-        """
-        logger.info("Starting crypto streaming pipeline...")
+        # Start layers sequentially — Silver reads from Kafka directly,
+        # Gold reads from Silver Delta table written by the Silver stream.
+        bronze_qs = self._start_bronze()
+        self.queries.extend(bronze_qs)
 
-        try:
-            # Create Spark session
-            self.spark = self._create_spark_session()
+        silver_qs = self._start_silver()
+        self.queries.extend(silver_qs)
 
-            # Setup signal handlers
-            self._setup_signal_handlers()
+        gold_qs = self._start_gold()
+        self.queries.extend(gold_qs)
 
-            # Initialize medallion layers
-            self._initialize_layers()
-
-            self.is_running = True
-
-            # Start Bronze layer (Kafka ingestion)
-            bronze_queries = self._start_bronze_streams()
-            self.queries.extend(bronze_queries)
-
-            # Start Silver layer (normalization)
-            silver_queries = self._start_silver_streams()
-            self.queries.extend(silver_queries)
-
-            # Start Gold layer (analytics)
-            gold_queries = self._start_gold_streams()
-            self.queries.extend(gold_queries)
-
-            logger.info(f"Pipeline started with {len(self.queries)} streaming queries")
-
-            # Await termination of all queries
-            self._await_termination()
-
-        except Exception as e:
-            logger.error(f"Pipeline failed to start: {e}")
-            self.stop()
-            raise
-
-    def _await_termination(self):
-        """Wait for all streaming queries to terminate."""
-        logger.info("Awaiting query termination...")
-
-        try:
-            # Use Spark's streaming query manager to await any termination
-            self.spark.streams.awaitAnyTermination()
-
-        except Exception as e:
-            logger.error(f"Error during await termination: {e}")
-            raise
+        logger.info(f"Pipeline running with {len(self.queries)} streaming queries")
+        self.spark.streams.awaitAnyTermination()
 
     def stop(self):
-        """
-        Stop all streaming queries gracefully.
-
-        Ensures proper cleanup of resources and checkpointing.
-        """
-        logger.info("Stopping streaming pipeline...")
+        logger.info("Stopping streaming pipeline")
         self.is_running = False
-
-        # Stop all active queries
-        for i, query in enumerate(self.queries):
+        for i, q in enumerate(self.queries):
             try:
-                if query and query.isActive:
-                    logger.info(f"Stopping query {i + 1}/{len(self.queries)}: {query.name or 'unnamed'}")
-                    query.stop()
-                    # Allow time for final checkpoint
-                    query.awaitTermination(timeout=30)
+                if q and q.isActive:
+                    q.stop()
+                    q.awaitTermination(timeout=30)
             except Exception as e:
-                logger.error(f"Error stopping query {i + 1}: {e}")
-
+                logger.error(f"Error stopping query {i}: {e}")
         self.queries.clear()
-
-        # Stop Spark session
         if self.spark:
-            logger.info("Stopping SparkSession...")
             self.spark.stop()
             self.spark = None
-
-        logger.info("Streaming pipeline stopped")
+        logger.info("Pipeline stopped")
 
     def get_query_status(self) -> List[Dict[str, Any]]:
-        """
-        Get status of all streaming queries.
+        return [
+            {
+                "name": q.name,
+                "id": str(q.id),
+                "is_active": q.isActive,
+                "recent_progress": q.recentProgress,
+                "status": q.status,
+            }
+            for q in self.queries
+            if q
+        ]
 
-        Returns:
-            List of dictionaries with query status information
-        """
-        statuses = []
-        for query in self.queries:
-            if query:
-                statuses.append({
-                    'name': query.name,
-                    'id': str(query.id),
-                    'is_active': query.isActive,
-                    'recent_progress': query.recentProgress,
-                    'status': query.status
-                })
-        return statuses
 
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
 
 def main():
-    """Main entry point for the streaming application."""
     import argparse
-
-    # Add path for utils import
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from utils.logging_config import setup_logging
-
-    parser = argparse.ArgumentParser(description='Crypto Data Streaming Pipeline')
-    parser.add_argument(
-        '--config',
-        type=str,
-        default='config/spark_config.yaml',
-        help='Path to configuration file'
-    )
-    parser.add_argument(
-        '--log-level',
-        type=str,
-        default='INFO',
-        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-        help='Logging level'
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
+    parser = argparse.ArgumentParser(
+        description="Crypto Data Streaming Pipeline"
+    )
+    parser.add_argument(
+        "--config", default="config/spark_config.yaml",
+        help="Path to configuration YAML",
+    )
     args = parser.parse_args()
 
-    # Setup logging
-    setup_logging(log_level=args.log_level)
-
-    # Create and start application
     app = CryptoStreamingApp(config_path=args.config)
-
     try:
         app.start()
     except KeyboardInterrupt:

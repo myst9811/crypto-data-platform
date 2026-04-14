@@ -89,6 +89,7 @@ services:
 
   # Binance WebSocket Producer
   binance-producer:
+    platform: linux/amd64
     build:
       context: ..
       dockerfile: docker/producer/Dockerfile
@@ -106,6 +107,7 @@ services:
 
   # Coinbase WebSocket Producer
   coinbase-producer:
+    platform: linux/amd64
     build:
       context: ..
       dockerfile: docker/producer/Dockerfile
@@ -123,6 +125,7 @@ services:
 
   # Kraken WebSocket Producer
   kraken-producer:
+    platform: linux/amd64
     build:
       context: ..
       dockerfile: docker/producer/Dockerfile
