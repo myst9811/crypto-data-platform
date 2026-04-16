@@ -4,11 +4,12 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.serving.config import ServingConfig
+from src.serving.api.auth import verify_api_key
 from src.serving.api.routes import (
     health_router,
     prices_router,
@@ -84,14 +85,47 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         content={"detail": "Internal server error"},
     )
 
-# Include routers
+# Include routers — health stays public; everything else requires bearer token
+# (auth disabled unless CRYPTO_API_KEY_HASH is set in env).
+_auth = [Depends(verify_api_key)]
+
 app.include_router(health_router, prefix=ServingConfig.API_PREFIX)
-app.include_router(prices_router, prefix=f"{ServingConfig.API_PREFIX}/prices", tags=["Prices"])
-app.include_router(vwap_router, prefix=f"{ServingConfig.API_PREFIX}/vwap", tags=["VWAP"])
-app.include_router(volume_router, prefix=f"{ServingConfig.API_PREFIX}/volume", tags=["Volume"])
-app.include_router(liquidity_router, prefix=f"{ServingConfig.API_PREFIX}/liquidity", tags=["Liquidity"])
-app.include_router(arbitrage_router, prefix=f"{ServingConfig.API_PREFIX}/arbitrage", tags=["Arbitrage"])
-app.include_router(ml_router, prefix=ServingConfig.API_PREFIX, tags=["ML Predictions"])
+app.include_router(
+    prices_router,
+    prefix=f"{ServingConfig.API_PREFIX}/prices",
+    tags=["Prices"],
+    dependencies=_auth,
+)
+app.include_router(
+    vwap_router,
+    prefix=f"{ServingConfig.API_PREFIX}/vwap",
+    tags=["VWAP"],
+    dependencies=_auth,
+)
+app.include_router(
+    volume_router,
+    prefix=f"{ServingConfig.API_PREFIX}/volume",
+    tags=["Volume"],
+    dependencies=_auth,
+)
+app.include_router(
+    liquidity_router,
+    prefix=f"{ServingConfig.API_PREFIX}/liquidity",
+    tags=["Liquidity"],
+    dependencies=_auth,
+)
+app.include_router(
+    arbitrage_router,
+    prefix=f"{ServingConfig.API_PREFIX}/arbitrage",
+    tags=["Arbitrage"],
+    dependencies=_auth,
+)
+app.include_router(
+    ml_router,
+    prefix=ServingConfig.API_PREFIX,
+    tags=["ML Predictions"],
+    dependencies=_auth,
+)
 
 
 @app.get("/")
