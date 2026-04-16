@@ -5,12 +5,14 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from src.serving.api.schemas.common import HealthResponse
 from src.serving.api.dependencies import reader_dependency, get_backend_info
+from src.serving.api.ratelimit import limiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Health"])
 
 
 @router.get("/health", response_model=HealthResponse)
+@limiter.exempt
 async def health_check() -> HealthResponse:
     """
     Basic health check endpoint.
@@ -26,6 +28,7 @@ async def health_check() -> HealthResponse:
 
 
 @router.get("/health/ready")
+@limiter.exempt
 async def readiness_check(
     reader=Depends(reader_dependency),
 ) -> dict:
@@ -61,6 +64,7 @@ async def readiness_check(
 
 
 @router.get("/health/live", response_model=HealthResponse)
+@limiter.exempt
 async def liveness_check() -> HealthResponse:
     """
     Liveness probe - basic service check.
@@ -76,6 +80,7 @@ async def liveness_check() -> HealthResponse:
 
 
 @router.get("/health/backend")
+@limiter.exempt
 async def backend_info() -> dict:
     """
     Get information about the data backend.

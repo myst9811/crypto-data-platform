@@ -7,9 +7,13 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from src.serving.config import ServingConfig
 from src.serving.api.auth import verify_api_key
+from src.serving.api.ratelimit import limiter
 from src.serving.api.routes import (
     health_router,
     prices_router,
@@ -65,6 +69,11 @@ app = FastAPI(
     openapi_url=f"{ServingConfig.API_PREFIX}/openapi.json",
     lifespan=lifespan,
 )
+
+# Rate limiting — default RATE_LIMIT_DEFAULT/minute per IP, shared budget
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # CORS middleware — explicit allowlist from config
 app.add_middleware(
