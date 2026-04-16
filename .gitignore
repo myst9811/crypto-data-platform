@@ -86,3 +86,9 @@ dmypy.json
 # Backup files
 *.bak
 *.backup
+
+# Graphify — only the human-readable report is tracked.
+# Everything else (obsidian vault, graph.json/html, caches, pickled graph) is
+# regenerable by re-running `/graphify` and just bloats diffs.
+graphify-out/*
+!graphify-out/GRAPH_REPORT.md
