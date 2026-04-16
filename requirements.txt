@@ -6,11 +6,11 @@
 -r requirements/serving.txt
 -r requirements/dev.txt
 
-# ML dependencies
-xgboost>=2.0.0
-torch>=2.2.0
-scikit-learn>=1.4.0
-arch>=6.3.0
-river>=0.21.0
-mlflow>=2.11.0
-deltalake>=0.15.0
+# ML dependencies — pinned for reproducibility and reviewable upgrades
+xgboost==2.0.3
+torch==2.2.0
+scikit-learn==1.4.0
+arch==6.3.0
+river==0.21.0
+mlflow==3.11.1
+deltalake==0.15.0
