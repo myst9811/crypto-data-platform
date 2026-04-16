@@ -1,5 +1,6 @@
 """ML prediction endpoints."""
 
+import logging
 import math
 import numpy as np
 from datetime import datetime
@@ -8,6 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Lazy-loaded singletons
@@ -231,8 +233,9 @@ async def volatility_symbol(symbol: str):
         garch_result = predictor.garch_models[symbol]
         forecast = garch_result.forecast(horizon=1)
         variance = float(forecast.variance.values[-1, 0])
-    except Exception as e:
-        raise HTTPException(500, f"GARCH forecast failed: {e}")
+    except Exception:
+        logger.exception("GARCH forecast failed for %s", symbol)
+        raise HTTPException(500, "GARCH forecast failed")
 
     return {
         "symbol": symbol,

@@ -26,6 +26,10 @@ async def get_arbitrage(
     reader=Depends(reader_dependency),
 ) -> ArbitrageListResponse:
     """
+
+import logging
+
+logger = logging.getLogger(__name__)
     Get arbitrage opportunities.
 
     Returns detected cross-exchange arbitrage opportunities from the Gold layer.
@@ -63,7 +67,7 @@ async def get_arbitrage(
             count=len(opportunities),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/active", response_model=ActiveArbitrageResponse)
@@ -117,7 +121,7 @@ async def get_active_arbitrage(
             max_age_seconds=max_age_seconds,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/history", response_model=ArbitrageHistoryResponse)
@@ -167,7 +171,7 @@ async def get_arbitrage_history(
             total_opportunities=len(opportunities),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{symbol}", response_model=ArbitrageListResponse)
@@ -219,4 +223,4 @@ async def get_symbol_arbitrage(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")

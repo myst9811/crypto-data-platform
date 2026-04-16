@@ -25,6 +25,10 @@ async def get_prices(
     reader=Depends(reader_dependency),
 ) -> PriceListResponse:
     """
+
+import logging
+
+logger = logging.getLogger(__name__)
     Get latest prices.
 
     Returns normalized price data from the Silver layer.
@@ -47,7 +51,7 @@ async def get_prices(
             count=len(prices),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/symbols", response_model=SymbolListResponse)
@@ -114,7 +118,7 @@ async def compare_prices(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{symbol}", response_model=PriceListResponse)
@@ -149,7 +153,7 @@ async def get_symbol_prices(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{symbol}/history", response_model=PriceHistoryResponse)
@@ -191,4 +195,4 @@ async def get_price_history(
             count=len(prices),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")

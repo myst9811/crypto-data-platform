@@ -24,6 +24,10 @@ async def get_volume(
     reader=Depends(reader_dependency),
 ) -> VolumeListResponse:
     """
+
+import logging
+
+logger = logging.getLogger(__name__)
     Get volume aggregates.
 
     Returns volume data from the Gold layer.
@@ -56,7 +60,7 @@ async def get_volume(
             count=len(volume_data),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/rankings", response_model=VolumeRankingResponse)
@@ -104,7 +108,7 @@ async def get_volume_rankings(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/market-share", response_model=MarketShareListResponse)
@@ -148,7 +152,7 @@ async def get_market_share(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{symbol}", response_model=VolumeListResponse)
@@ -195,4 +199,4 @@ async def get_symbol_volume(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")

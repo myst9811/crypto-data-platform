@@ -21,6 +21,10 @@ async def get_liquidity(
     reader=Depends(reader_dependency),
 ) -> LiquidityListResponse:
     """
+
+import logging
+
+logger = logging.getLogger(__name__)
     Get liquidity metrics.
 
     Returns bid/ask spreads, depth, and liquidity scores from the Gold layer.
@@ -54,7 +58,7 @@ async def get_liquidity(
             count=len(liquidity_data),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/rankings", response_model=LiquidityRankingResponse)
@@ -102,7 +106,7 @@ async def get_liquidity_rankings(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{symbol}", response_model=LiquidityListResponse)
@@ -149,4 +153,4 @@ async def get_symbol_liquidity(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")

@@ -26,6 +26,10 @@ async def get_vwap(
     reader=Depends(reader_dependency),
 ) -> VWAPListResponse:
     """
+
+import logging
+
+logger = logging.getLogger(__name__)
     Get VWAP metrics.
 
     Returns Volume Weighted Average Price data from the Gold layer.
@@ -60,7 +64,7 @@ async def get_vwap(
             count=len(vwap_data),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/windows", response_model=WindowDurationListResponse)
@@ -117,7 +121,7 @@ async def get_symbol_vwap(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{symbol}/history", response_model=VWAPHistoryResponse)
@@ -166,4 +170,4 @@ async def get_vwap_history(
             count=len(vwap_data),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
