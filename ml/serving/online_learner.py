@@ -17,6 +17,28 @@ MODEL_PATH = ARTIFACTS_DIR / "online_learner.pkl"
 logger = logging.getLogger(__name__)
 
 
+def _validate_features(features):
+    if not isinstance(features, dict):
+        raise TypeError(f"features must be dict, got {type(features).__name__}")
+    import math
+    for k, v in features.items():
+        if isinstance(v, bool):
+            raise TypeError(f"feature {k!r} is bool; expected numeric")
+        if not isinstance(v, (int, float)):
+            raise TypeError(f"feature {k!r} must be numeric, got {type(v).__name__}")
+        if isinstance(v, float) and not math.isfinite(v):
+            if math.isnan(v):
+                raise ValueError(f"feature {k!r} is NaN; expected finite")
+            raise ValueError(f"feature {k!r} is Inf; expected finite")
+
+
+def _validate_label(label):
+    if isinstance(label, bool) or not isinstance(label, int):
+        raise TypeError(f"label must be int, got {type(label).__name__}")
+    if label not in (0, 1):
+        raise ValueError(f"label must be 0 or 1, got {label}")
+
+
 class OnlineLearner:
     """Adaptive online learner for streaming arbitrage prediction."""
 
@@ -63,7 +85,14 @@ class OnlineLearner:
             pass
 
     def learn_one(self, features: Dict[str, Any], label: int):
-        """Update the model with a single observation."""
+        """Update the model with a single observation.
+
+        Validates input to prevent adaptive-model poisoning via NaN/Inf or
+        non-numeric features, and rejects non-binary labels.
+        """
+        _validate_features(features)
+        _validate_label(label)
+
         pred = self.model.predict_one(features)
         self._recent_correct.append(int(pred == label))
 
