@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from src.serving.api.validators import SYMBOL_PATTERN
 
 from src.serving.api.dependencies import reader_dependency
 from src.serving.api.schemas.vwap import (
@@ -17,7 +18,7 @@ router = APIRouter()
 
 @router.get("", response_model=VWAPListResponse)
 async def get_vwap(
-    symbol: Optional[str] = Query(None, description="Filter by trading symbol"),
+    symbol: Optional[str] = Query(None, description="Filter by trading symbol", pattern=SYMBOL_PATTERN),
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     window: Optional[str] = Query(
         None, description="Window duration (1min, 5min, 15min, 1h)"
@@ -26,6 +27,10 @@ async def get_vwap(
     reader=Depends(reader_dependency),
 ) -> VWAPListResponse:
     """
+
+import logging
+
+logger = logging.getLogger(__name__)
     Get VWAP metrics.
 
     Returns Volume Weighted Average Price data from the Gold layer.
@@ -60,7 +65,7 @@ async def get_vwap(
             count=len(vwap_data),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/windows", response_model=WindowDurationListResponse)
@@ -117,7 +122,7 @@ async def get_symbol_vwap(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{symbol}/history", response_model=VWAPHistoryResponse)
@@ -166,4 +171,4 @@ async def get_vwap_history(
             count=len(vwap_data),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")

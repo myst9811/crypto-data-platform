@@ -9,7 +9,6 @@ spark:
     spark.sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
     spark.sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
     spark.databricks.delta.retentionDurationCheck.enabled: "false"
-    spark.databricks.delta.schema.autoMerge.enabled: "true"
     spark.streaming.kafka.maxRatePerPartition: 100
     spark.streaming.backpressure.enabled: "true"
     spark.serializer: "org.apache.spark.serializer.KryoSerializer"

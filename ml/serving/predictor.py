@@ -1,10 +1,11 @@
 """ArbitragePredictor — loads all models and runs inference pipeline."""
 
-import pickle
 import numpy as np
 import torch
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+from ml.utils.safe_artifact import safe_load_pickle, safe_load_torch
 
 ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts"
 
@@ -20,33 +21,27 @@ class ArbitragePredictor:
     """
 
     def __init__(self):
-        self.isolation_forest = self._load_pickle("isolation_forest.pkl")
-        self.xgboost_model = self._load_pickle("xgboost_arbitrage.pkl")
+        self.isolation_forest = safe_load_pickle(ARTIFACTS_DIR / "isolation_forest.pkl")
+        self.xgboost_model = safe_load_pickle(ARTIFACTS_DIR / "xgboost_arbitrage.pkl")
         self.garch_models: Dict[str, Any] = {}
         self.lstm_model = None
         self._load_garch_models()
         self._load_lstm()
 
-    @staticmethod
-    def _load_pickle(filename: str) -> Optional[Any]:
-        path = ARTIFACTS_DIR / filename
-        if path.exists():
-            with open(path, "rb") as f:
-                return pickle.load(f)
-        return None
-
     def _load_garch_models(self):
         for p in ARTIFACTS_DIR.glob("garch_*.pkl"):
+            if p.suffix == ".sig" or p.name.endswith(".pkl.sig"):
+                continue
             symbol = p.stem.replace("garch_", "").replace("_", "/")
-            with open(p, "rb") as f:
-                self.garch_models[symbol] = pickle.load(f)
+            self.garch_models[symbol] = safe_load_pickle(p)
 
     def _load_lstm(self):
         from ml.training.train_lstm import PriceDirectionLSTM
         path = ARTIFACTS_DIR / "lstm_price_direction.pt"
-        if path.exists():
+        state = safe_load_torch(path, map_location="cpu")
+        if state is not None:
             model = PriceDirectionLSTM(input_size=6, hidden_size=64, num_layers=2)
-            model.load_state_dict(torch.load(path, map_location="cpu"))
+            model.load_state_dict(state)
             model.eval()
             self.lstm_model = model
 

@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from src.serving.api.validators import SYMBOL_PATTERN
 
 from src.serving.api.dependencies import reader_dependency
 from src.serving.api.schemas.arbitrage import (
@@ -18,7 +19,7 @@ router = APIRouter()
 
 @router.get("", response_model=ArbitrageListResponse)
 async def get_arbitrage(
-    symbol: Optional[str] = Query(None, description="Filter by trading pair"),
+    symbol: Optional[str] = Query(None, description="Filter by trading pair", pattern=SYMBOL_PATTERN),
     min_profit: Optional[float] = Query(
         None, ge=0, description="Minimum net profit percentage"
     ),
@@ -26,6 +27,10 @@ async def get_arbitrage(
     reader=Depends(reader_dependency),
 ) -> ArbitrageListResponse:
     """
+
+import logging
+
+logger = logging.getLogger(__name__)
     Get arbitrage opportunities.
 
     Returns detected cross-exchange arbitrage opportunities from the Gold layer.
@@ -63,7 +68,7 @@ async def get_arbitrage(
             count=len(opportunities),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/active", response_model=ActiveArbitrageResponse)
@@ -117,14 +122,14 @@ async def get_active_arbitrage(
             max_age_seconds=max_age_seconds,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/history", response_model=ArbitrageHistoryResponse)
 async def get_arbitrage_history(
     start: datetime = Query(..., description="Start datetime"),
     end: datetime = Query(..., description="End datetime"),
-    symbol: Optional[str] = Query(None, description="Filter by trading pair"),
+    symbol: Optional[str] = Query(None, description="Filter by trading pair", pattern=SYMBOL_PATTERN),
     limit: int = Query(1000, ge=1, le=10000),
     reader=Depends(reader_dependency),
 ) -> ArbitrageHistoryResponse:
@@ -167,7 +172,7 @@ async def get_arbitrage_history(
             total_opportunities=len(opportunities),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{symbol}", response_model=ArbitrageListResponse)
@@ -219,4 +224,4 @@ async def get_symbol_arbitrage(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("internal error"); raise HTTPException(status_code=500, detail="Internal server error")

@@ -1,12 +1,19 @@
 """FastAPI application entry point."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from src.serving.config import ServingConfig
+from src.serving.api.auth import verify_api_key
+from src.serving.api.ratelimit import limiter
 from src.serving.api.routes import (
     health_router,
     prices_router,
@@ -63,23 +70,71 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# Rate limiting — default RATE_LIMIT_DEFAULT/minute per IP, shared budget
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+# CORS middleware — explicit allowlist from config
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ServingConfig.CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
-# Include routers
+
+# Global exception handler — never leak internal details to clients
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+# Include routers — health stays public; everything else requires bearer token
+# (auth disabled unless CRYPTO_API_KEY_HASH is set in env).
+_auth = [Depends(verify_api_key)]
+
 app.include_router(health_router, prefix=ServingConfig.API_PREFIX)
-app.include_router(prices_router, prefix=f"{ServingConfig.API_PREFIX}/prices", tags=["Prices"])
-app.include_router(vwap_router, prefix=f"{ServingConfig.API_PREFIX}/vwap", tags=["VWAP"])
-app.include_router(volume_router, prefix=f"{ServingConfig.API_PREFIX}/volume", tags=["Volume"])
-app.include_router(liquidity_router, prefix=f"{ServingConfig.API_PREFIX}/liquidity", tags=["Liquidity"])
-app.include_router(arbitrage_router, prefix=f"{ServingConfig.API_PREFIX}/arbitrage", tags=["Arbitrage"])
-app.include_router(ml_router, prefix=ServingConfig.API_PREFIX, tags=["ML Predictions"])
+app.include_router(
+    prices_router,
+    prefix=f"{ServingConfig.API_PREFIX}/prices",
+    tags=["Prices"],
+    dependencies=_auth,
+)
+app.include_router(
+    vwap_router,
+    prefix=f"{ServingConfig.API_PREFIX}/vwap",
+    tags=["VWAP"],
+    dependencies=_auth,
+)
+app.include_router(
+    volume_router,
+    prefix=f"{ServingConfig.API_PREFIX}/volume",
+    tags=["Volume"],
+    dependencies=_auth,
+)
+app.include_router(
+    liquidity_router,
+    prefix=f"{ServingConfig.API_PREFIX}/liquidity",
+    tags=["Liquidity"],
+    dependencies=_auth,
+)
+app.include_router(
+    arbitrage_router,
+    prefix=f"{ServingConfig.API_PREFIX}/arbitrage",
+    tags=["Arbitrage"],
+    dependencies=_auth,
+)
+app.include_router(
+    ml_router,
+    prefix=ServingConfig.API_PREFIX,
+    tags=["ML Predictions"],
+    dependencies=_auth,
+)
 
 
 @app.get("/")
@@ -95,9 +150,11 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
+    # reload only in development (ENV=dev); never in production
+    dev_mode = ServingConfig.ENV in ("dev", "development")
     uvicorn.run(
         "src.serving.api.main:app",
         host=ServingConfig.API_HOST,
         port=ServingConfig.API_PORT,
-        reload=True,
+        reload=dev_mode,
     )

@@ -54,12 +54,24 @@ class ServingConfig:
     CACHE_TTL_SECONDS: int = int(os.getenv("CACHE_TTL_SECONDS", "10"))
     CACHE_MAX_SIZE: int = int(os.getenv("CACHE_MAX_SIZE", "1000"))
 
-    API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
+    API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
     API_PREFIX: str = "/api/v1"
 
-    DASHBOARD_HOST: str = os.getenv("DASHBOARD_HOST", "0.0.0.0")
+    DASHBOARD_HOST: str = os.getenv("DASHBOARD_HOST", "127.0.0.1")
     DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "8501"))
+
+    # Comma-separated list; defaults to localhost dashboard only
+    CORS_ALLOWED_ORIGINS: List[str] = [
+        o.strip()
+        for o in os.getenv(
+            "CORS_ALLOWED_ORIGINS",
+            "http://localhost:8501,http://127.0.0.1:8501",
+        ).split(",")
+        if o.strip()
+    ]
+
+    ENV: str = os.getenv("ENV", "production").lower()
 
     SPARK_APP_NAME: str = "crypto-api-reader"
     SPARK_MASTER: str = os.getenv("SPARK_MASTER", "local[*]")
