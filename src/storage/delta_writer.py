@@ -63,7 +63,6 @@ class DeltaWriter:
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", checkpoint_location)
-            .option("mergeSchema", "true")
             .trigger(processingTime=trigger_interval)
             .start(output_path)
         )
@@ -101,7 +100,6 @@ class DeltaWriter:
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", checkpoint_location)
-            .option("mergeSchema", "true")
             .trigger(processingTime=trigger_interval)
         )
 
@@ -145,7 +143,6 @@ class DeltaWriter:
             .format("delta")
             .outputMode(output_mode)
             .option("checkpointLocation", checkpoint_location)
-            .option("mergeSchema", "true")
             .trigger(processingTime=trigger_interval)
         )
 
@@ -175,7 +172,7 @@ class DeltaWriter:
         """
         logger.info(f"Writing batch data to: {path}")
 
-        writer = df.write.format("delta").mode(mode).option("mergeSchema", "true")
+        writer = df.write.format("delta").mode(mode)
 
         if partition_by:
             writer = writer.partitionBy(*partition_by)

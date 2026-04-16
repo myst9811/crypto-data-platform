@@ -153,7 +153,6 @@ class CryptoStreamingApp:
                     "org.apache.spark.sql.delta.catalog.DeltaCatalog")
             .config("spark.jars.packages", self.JARS)
             .config("spark.sql.shuffle.partitions", "4")
-            .config("spark.databricks.delta.schema.autoMerge.enabled", "true")
             .config("spark.databricks.delta.retentionDurationCheck.enabled",
                     "false")
             .config("spark.driver.memory", "2g")
@@ -221,7 +220,6 @@ class CryptoStreamingApp:
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", "data/checkpoints/bronze/trades")
-            .option("mergeSchema", "true")
             .trigger(processingTime="10 seconds")
             .start("data/bronze/trades")
         )
@@ -239,7 +237,6 @@ class CryptoStreamingApp:
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", "data/checkpoints/bronze/ticker")
-            .option("mergeSchema", "true")
             .trigger(processingTime="10 seconds")
             .start("data/bronze/ticker")
         )
@@ -324,7 +321,6 @@ class CryptoStreamingApp:
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", "data/checkpoints/silver/prices")
-            .option("mergeSchema", "true")
             .trigger(processingTime="10 seconds")
             .start("data/silver/prices")
         )
@@ -388,7 +384,6 @@ class CryptoStreamingApp:
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", "data/checkpoints/gold/vwap")
-            .option("mergeSchema", "true")
             .trigger(processingTime="10 seconds")
             .start("data/gold/vwap")
         )
@@ -473,7 +468,6 @@ class CryptoStreamingApp:
                 result_df.write
                 .format("delta")
                 .mode("append")
-                .option("mergeSchema", "true")
                 .save("data/gold/spreads")
             )
 
@@ -565,7 +559,6 @@ class CryptoStreamingApp:
                 result_df.write
                 .format("delta")
                 .mode("append")
-                .option("mergeSchema", "true")
                 .save("data/gold/arbitrage_signals")
             )
 

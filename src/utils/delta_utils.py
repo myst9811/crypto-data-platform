@@ -49,7 +49,7 @@ class DeltaLakeManager:
                 writer = writer.partitionBy(*partition_by)
 
             if merge_schema:
-                writer = writer.option("mergeSchema", "true")
+                writer = writer
 
             writer.save(path)
             logger.info(f"Successfully wrote data to Delta table: {path}")
