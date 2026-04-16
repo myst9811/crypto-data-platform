@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 from ml.mlflow_setup import get_or_create_experiment
 from ml.features.feature_extractor import load_silver_prices
 from ml.evaluation.metrics import compute_regression_metrics
+from ml.utils.safe_artifact import sign_artifact, ArtifactIntegrityError
 
 ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts"
 MODEL_PATH = ARTIFACTS_DIR / "lstm_price_direction.pt"
@@ -215,6 +216,10 @@ def train():
         # Save model
         ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), MODEL_PATH)
+        try:
+            sign_artifact(MODEL_PATH)
+        except ArtifactIntegrityError:
+            print("WARN: CRYPTO_MODEL_HMAC_KEY not set; artifact left unsigned.")
         mlflow.log_artifact(str(MODEL_PATH))
 
         print(f"Test directional accuracy: {dir_acc:.4f}")

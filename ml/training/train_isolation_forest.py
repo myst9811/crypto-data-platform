@@ -9,6 +9,7 @@ from sklearn.ensemble import IsolationForest
 
 from ml.mlflow_setup import get_or_create_experiment
 from ml.features.feature_store import load_feature_store
+from ml.utils.safe_artifact import sign_artifact, ArtifactIntegrityError
 
 ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts"
 MODEL_PATH = ARTIFACTS_DIR / "isolation_forest.pkl"
@@ -71,6 +72,10 @@ def train():
         ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
         with open(MODEL_PATH, "wb") as f:
             pickle.dump(model, f)
+        try:
+            sign_artifact(MODEL_PATH)
+        except ArtifactIntegrityError:
+            print("WARN: CRYPTO_MODEL_HMAC_KEY not set; artifact left unsigned.")
         mlflow.log_artifact(str(MODEL_PATH))
 
         print(f"Anomaly rate: {anomaly_rate:.4f}")

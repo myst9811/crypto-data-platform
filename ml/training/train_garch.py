@@ -10,6 +10,7 @@ from arch import arch_model
 
 from ml.mlflow_setup import get_or_create_experiment
 from ml.features.feature_extractor import load_silver_prices
+from ml.utils.safe_artifact import sign_artifact, ArtifactIntegrityError
 
 ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts"
 
@@ -63,6 +64,10 @@ def train():
                 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
                 with open(model_path, "wb") as f:
                     pickle.dump(result, f)
+                try:
+                    sign_artifact(model_path)
+                except ArtifactIntegrityError:
+                    print("WARN: CRYPTO_MODEL_HMAC_KEY not set; artifact left unsigned.")
                 mlflow.log_artifact(str(model_path))
 
                 print(f"{symbol}: AIC={aic:.2f}, BIC={bic:.2f}")

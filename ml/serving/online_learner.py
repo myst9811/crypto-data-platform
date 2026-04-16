@@ -1,14 +1,20 @@
 """Online learning with River's AdaptiveRandomForestClassifier."""
 
+import logging
+import os
 import pickle
+import tempfile
 from pathlib import Path
 from collections import deque
 from typing import Dict, Any
 
 from river.forest import ARFClassifier
 
+from ml.utils.safe_artifact import safe_load_pickle, sign_artifact, ArtifactIntegrityError
+
 ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts"
 MODEL_PATH = ARTIFACTS_DIR / "online_learner.pkl"
+logger = logging.getLogger(__name__)
 
 
 class OnlineLearner:
@@ -21,24 +27,40 @@ class OnlineLearner:
         self._load_state()
 
     def _load_state(self):
-        if MODEL_PATH.exists():
-            try:
-                with open(MODEL_PATH, "rb") as f:
-                    state = pickle.load(f)
-                self.model = state["model"]
-                self._update_count = state["update_count"]
-                self._recent_correct = state["recent_correct"]
-            except Exception:
-                pass  # start fresh
+        try:
+            state = safe_load_pickle(MODEL_PATH)
+        except ArtifactIntegrityError as e:
+            logger.error("Refusing to load tampered online learner: %s", e)
+            return
+        if state is None:
+            return
+        self.model = state["model"]
+        self._update_count = state["update_count"]
+        self._recent_correct = state["recent_correct"]
 
     def _save_state(self):
         ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-        with open(MODEL_PATH, "wb") as f:
-            pickle.dump({
-                "model": self.model,
-                "update_count": self._update_count,
-                "recent_correct": self._recent_correct,
-            }, f)
+        # Atomic write: pickle to temp file in same dir, then os.replace
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".online_learner.", suffix=".pkl.tmp", dir=str(ARTIFACTS_DIR)
+        )
+        try:
+            with os.fdopen(fd, "wb") as f:
+                pickle.dump({
+                    "model": self.model,
+                    "update_count": self._update_count,
+                    "recent_correct": self._recent_correct,
+                }, f)
+            os.replace(tmp_name, MODEL_PATH)
+        except Exception:
+            if os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+            raise
+        try:
+            sign_artifact(MODEL_PATH)
+        except ArtifactIntegrityError:
+            # Dev mode (no HMAC key): skip signing, loader will warn on next load
+            pass
 
     def learn_one(self, features: Dict[str, Any], label: int):
         """Update the model with a single observation."""

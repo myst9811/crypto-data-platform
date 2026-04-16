@@ -3,13 +3,13 @@
 import streamlit as st
 import pandas as pd
 import requests
-import pickle
 from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from src.serving.dashboard.config import DashboardConfig
+from ml.utils.safe_artifact import safe_load_pickle
 
 st.set_page_config(page_title="ML Insights", page_icon="🧠", layout="wide")
 st.title("🧠 ML Insights")
@@ -58,8 +58,7 @@ st.subheader("XGBoost Feature Importance")
 xgb_path = ARTIFACTS_DIR / "xgboost_arbitrage.pkl"
 if xgb_path.exists():
     try:
-        with open(xgb_path, "rb") as f:
-            model = pickle.load(f)
+        model = safe_load_pickle(xgb_path)
         feature_names = [
             "spread_abs", "spread_pct", "price_a", "price_b",
             "rolling_vol_15s", "rolling_vol_60s",
@@ -82,8 +81,7 @@ st.subheader("Online Learner (Adaptive Random Forest)")
 online_path = ARTIFACTS_DIR / "online_learner.pkl"
 if online_path.exists():
     try:
-        with open(online_path, "rb") as f:
-            state = pickle.load(f)
+        state = safe_load_pickle(online_path)
         recent = state.get("recent_correct", [])
         acc = sum(recent) / len(recent) if recent else 0.0
         st.metric("Rolling Accuracy (500 samples)", f"{acc:.3f}")
