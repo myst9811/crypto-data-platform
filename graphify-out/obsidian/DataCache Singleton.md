@@ -1,0 +1,16 @@
+---
+source_file: "src/serving/api/dependencies.py"
+type: "code"
+community: "Feature Extraction & Store"
+tags:
+  - graphify/code
+  - graphify/EXTRACTED
+  - community/Feature_Extraction_&_Store
+---
+
+# DataCache Singleton
+
+## Connections
+- [[Dependency Injection (DeltaReaderCache)]] - `shares_data_with` [EXTRACTED]
+
+#graphify/code #graphify/EXTRACTED #community/Feature_Extraction_&_Store
