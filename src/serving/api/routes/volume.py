@@ -2,6 +2,7 @@
 
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from src.serving.api.validators import SYMBOL_PATTERN
 
 from src.serving.api.dependencies import reader_dependency
 from src.serving.api.schemas.volume import (
@@ -17,7 +18,7 @@ router = APIRouter()
 
 @router.get("", response_model=VolumeListResponse)
 async def get_volume(
-    symbol: Optional[str] = Query(None, description="Filter by trading symbol"),
+    symbol: Optional[str] = Query(None, description="Filter by trading symbol", pattern=SYMBOL_PATTERN),
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     window: Optional[str] = Query(None, description="Window duration"),
     limit: int = Query(100, ge=1, le=1000),
@@ -65,7 +66,7 @@ logger = logging.getLogger(__name__)
 
 @router.get("/rankings", response_model=VolumeRankingResponse)
 async def get_volume_rankings(
-    symbol: str = Query(..., description="Trading symbol"),
+    symbol: str = Query(..., description="Trading symbol", pattern=SYMBOL_PATTERN),
     window: str = Query("1min", description="Window duration"),
     reader=Depends(reader_dependency),
 ) -> VolumeRankingResponse:
@@ -113,7 +114,7 @@ async def get_volume_rankings(
 
 @router.get("/market-share", response_model=MarketShareListResponse)
 async def get_market_share(
-    symbol: str = Query(..., description="Trading symbol"),
+    symbol: str = Query(..., description="Trading symbol", pattern=SYMBOL_PATTERN),
     window: str = Query("1min", description="Window duration"),
     reader=Depends(reader_dependency),
 ) -> MarketShareListResponse:

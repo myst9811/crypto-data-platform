@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from src.serving.api.validators import SYMBOL_PATTERN
 
 from src.serving.api.dependencies import reader_dependency
 from src.serving.api.schemas.prices import (
@@ -19,7 +20,7 @@ router = APIRouter()
 
 @router.get("", response_model=PriceListResponse)
 async def get_prices(
-    symbol: Optional[str] = Query(None, description="Filter by trading symbol (e.g., BTC/USD)"),
+    symbol: Optional[str] = Query(None, description="Filter by trading symbol (e.g., BTC/USD)", pattern=SYMBOL_PATTERN),
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
     reader=Depends(reader_dependency),
@@ -72,7 +73,7 @@ async def get_exchanges(
 
 @router.get("/compare", response_model=PriceComparisonResponse)
 async def compare_prices(
-    symbol: str = Query(..., description="Trading symbol to compare"),
+    symbol: str = Query(..., description="Trading symbol to compare", pattern=SYMBOL_PATTERN),
     reader=Depends(reader_dependency),
 ) -> PriceComparisonResponse:
     """

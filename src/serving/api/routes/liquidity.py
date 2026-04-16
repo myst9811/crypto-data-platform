@@ -2,6 +2,7 @@
 
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from src.serving.api.validators import SYMBOL_PATTERN
 
 from src.serving.api.dependencies import reader_dependency
 from src.serving.api.schemas.liquidity import (
@@ -15,7 +16,7 @@ router = APIRouter()
 
 @router.get("", response_model=LiquidityListResponse)
 async def get_liquidity(
-    symbol: Optional[str] = Query(None, description="Filter by trading symbol"),
+    symbol: Optional[str] = Query(None, description="Filter by trading symbol", pattern=SYMBOL_PATTERN),
     exchange: Optional[str] = Query(None, description="Filter by exchange"),
     limit: int = Query(100, ge=1, le=1000),
     reader=Depends(reader_dependency),
@@ -63,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 @router.get("/rankings", response_model=LiquidityRankingResponse)
 async def get_liquidity_rankings(
-    symbol: str = Query(..., description="Trading symbol"),
+    symbol: str = Query(..., description="Trading symbol", pattern=SYMBOL_PATTERN),
     reader=Depends(reader_dependency),
 ) -> LiquidityRankingResponse:
     """

@@ -1,6 +1,7 @@
 """Base WebSocket producer for crypto exchanges."""
 
 import json
+import os
 import time
 import logging
 from abc import ABC, abstractmethod
@@ -16,6 +17,11 @@ from utils.kafka_utils import KafkaProducerWrapper
 from utils.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# Opt-in debug only: include the raw exchange payload in the Kafka envelope.
+# Default off — storing raw payloads bloats the lake and widens the blast
+# radius of any downstream compromise.
+INCLUDE_RAW_MESSAGE = os.getenv("INGEST_INCLUDE_RAW_MESSAGE", "false").lower() == "true"
 
 
 class BaseProducer(ABC):
@@ -166,8 +172,9 @@ class BaseProducer(ABC):
                     **parsed_data,
                     'exchange': self.exchange_name,
                     'ingestion_timestamp': datetime.utcnow().isoformat(),
-                    'raw_message': raw_data
                 }
+                if INCLUDE_RAW_MESSAGE:
+                    enriched_data['raw_message'] = raw_data
 
                 topic = self.get_kafka_topic(message_type)
 
