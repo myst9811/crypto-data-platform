@@ -49,58 +49,73 @@ def compute_trade_profit_pct(row: pd.Series) -> float:
 def generate_labels(
     df: pd.DataFrame,
     execution_latency_ms: float = 200.0,
-    spread_threshold: float = 0.0015,
     percentile_fallback: float = 75.0,
 ) -> pd.DataFrame:
-    """Add a `label` column to the feature DataFrame.
+    """Add a `label` column = 1 iff a round-trip arbitrage opened now would
+    be profitable after fees when closed at T + latency.
 
     Args:
-        df: Feature DataFrame with at least `event_time` and `spread_pct`.
-        execution_latency_ms: How far ahead to look (milliseconds).
-        spread_threshold: Spread must exceed this at T+latency for label=1.
-        percentile_fallback: If the fixed threshold produces no positive
-            examples (e.g. because market spreads are currently below the
-            threshold), fall back to labeling the top `percentile_fallback`%
-            of spreads as class 1.  This ensures the model always sees
-            both classes during training.
+        df: Feature DataFrame with event_time, symbol, exchange_a,
+            exchange_b, price_a, price_b (all required).
+        execution_latency_ms: How far ahead the position is closed.
+        percentile_fallback: If no row clears zero net profit (thin market
+            / small sample), label the top `percentile_fallback`% of
+            FUTURE net profits as 1 so training still has both classes.
+            The fallback thresholds the FUTURE quantity, not any current
+            feature, so it does not leak.
 
     Returns:
-        DataFrame with `label` column appended (rows where label
-        cannot be computed are dropped).
+        DataFrame with `label` appended; rows whose future lookup is
+        unavailable are dropped.
     """
-    df = df.sort_values("event_time").reset_index(drop=True)
+    required = {"event_time", "symbol", "exchange_a", "exchange_b",
+                "price_a", "price_b"}
+    missing = required - set(df.columns)
+    if missing:
+        raise KeyError(
+            f"generate_labels missing required columns: {sorted(missing)}"
+        )
 
-    # Compute time delta between consecutive rows
+    df = df.sort_values(["symbol", "exchange_a", "exchange_b", "event_time"])
+    df = df.reset_index(drop=True)
+
     times = pd.to_datetime(df["event_time"])
     delta_ms = times.diff().dt.total_seconds() * 1000
-
-    # Estimate how many rows correspond to execution_latency_ms
     median_interval = delta_ms.median()
     if pd.isna(median_interval) or median_interval <= 0:
-        median_interval = 100.0  # default 100ms between ticks
-
+        median_interval = 100.0
     shift_rows = max(1, int(round(execution_latency_ms / median_interval)))
 
-    # Look-ahead: shift spread_pct backwards so row T sees T+shift value
-    df["future_spread_pct"] = df["spread_pct"].shift(-shift_rows)
+    group = ["symbol", "exchange_a", "exchange_b"]
+    df["future_price_a"] = df.groupby(group)["price_a"].shift(-shift_rows)
+    df["future_price_b"] = df.groupby(group)["price_b"].shift(-shift_rows)
 
-    df["label"] = (df["future_spread_pct"] > spread_threshold).astype(int)
+    df = df.dropna(subset=["future_price_a", "future_price_b"]).copy()
 
-    # Drop rows where future is not available (tail rows)
-    df = df.dropna(subset=["future_spread_pct"]).copy()
-    df = df.drop(columns=["future_spread_pct"])
+    df["future_net_profit"] = df.apply(
+        lambda r: compute_trade_profit_pct(pd.Series({
+            "price_a": r["future_price_a"],
+            "price_b": r["future_price_b"],
+            "exchange_a": r["exchange_a"],
+            "exchange_b": r["exchange_b"],
+        })),
+        axis=1,
+    )
 
-    # If the fixed threshold produces no positive examples, fall back to a
-    # percentile-based threshold so the model can learn something meaningful.
+    df["label"] = (df["future_net_profit"] > 0).astype(int)
+
     if df["label"].sum() == 0:
-        adaptive_threshold = df["spread_pct"].quantile(percentile_fallback / 100.0)
+        adaptive = df["future_net_profit"].quantile(percentile_fallback / 100.0)
         print(
-            f"[label_generator] No positives with threshold={spread_threshold:.4f}. "
-            f"Using {percentile_fallback}th-percentile threshold={adaptive_threshold:.6f} instead."
+            f"[label_generator] No profitable rows at fee-net threshold. "
+            f"Falling back to {percentile_fallback}th-percentile of FUTURE "
+            f"net profit (= {adaptive:.6f})."
         )
-        df["label"] = (df["spread_pct"] > adaptive_threshold).astype(int)
+        df["label"] = (df["future_net_profit"] > adaptive).astype(int)
 
-    return df
+    return df.drop(
+        columns=["future_price_a", "future_price_b", "future_net_profit"]
+    ).reset_index(drop=True)
 
 
 if __name__ == "__main__":

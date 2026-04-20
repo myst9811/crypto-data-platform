@@ -61,31 +61,103 @@ def test_feature_extractor_output_columns(tmp_path):
 # Test 3: Label generator — no future leakage
 # -----------------------------------------------------------------------
 
-def test_label_generator_no_future_leakage():
-    """Labels at time T should only use data from time <= T (spread_pct shift)."""
+def test_generate_labels_uses_future_net_profit():
+    """Label is 1 only when the future price pair yields a positive profit
+    after fees. Uses a tiny hand-constructed frame so the expected labels
+    can be computed manually.
+    """
     from ml.training.label_generator import generate_labels
 
-    n = 200
+    # Five rows, 100ms apart, same symbol + exchange pair.
+    # shift_rows will be 2 given execution_latency_ms=200 and median=100ms.
     df = pd.DataFrame({
-        "spread_pct": np.linspace(0.001, 0.003, n),
-        "spread_abs": np.linspace(10, 30, n),
-        "event_time": pd.date_range("2026-01-01", periods=n, freq="100ms"),
+        "event_time": pd.to_datetime([
+            "2026-04-20T00:00:00.000Z",
+            "2026-04-20T00:00:00.100Z",
+            "2026-04-20T00:00:00.200Z",
+            "2026-04-20T00:00:00.300Z",
+            "2026-04-20T00:00:00.400Z",
+        ]),
+        "symbol":     ["BTC/USD"] * 5,
+        "exchange_a": ["binance"] * 5,
+        "exchange_b": ["coinbase"] * 5,
+        # Future profit at row 0 uses prices from row 2 (shift=2):
+        #   pa=100, pb=101 -> gross 1% -> net 1% - 0.1505% > 0 -> label 1
+        # Future profit at row 1 uses prices from row 3:
+        #   pa=100, pb=100.05 -> gross 0.05% -> net < 0 -> label 0
+        # Future profit at row 2 uses prices from row 4:
+        #   pa=100, pb=100 -> gross 0 -> net < 0 -> label 0
+        "price_a":   [100.0, 100.0, 100.0, 100.0,  100.0],
+        "price_b":   [100.0, 100.0, 101.0, 100.05, 100.0],
+        "spread_pct":[0.0,   0.0,   0.01,  0.0005, 0.0],
+        "spread_abs":[0.0,   0.0,   1.0,   0.05,   0.0],
     })
 
-    labelled = generate_labels(df, execution_latency_ms=200, spread_threshold=0.0015)
+    labelled = generate_labels(df, execution_latency_ms=200)
 
-    # labelled should have fewer rows than input (tail rows dropped)
-    assert len(labelled) < n
-
-    # The label column should exist and only be 0 or 1
+    assert len(labelled) == 3
     assert "label" in labelled.columns
     assert set(labelled["label"].unique()).issubset({0, 1})
+    assert list(labelled["label"].astype(int)) == [1, 0, 0]
 
-    # Key check: the last rows of the original df should be missing
-    # (because we can't look ahead from them)
-    original_last_time = df["event_time"].iloc[-1]
-    labelled_last_time = labelled["event_time"].iloc[-1]
-    assert labelled_last_time < original_last_time
+
+def test_generate_labels_fees_can_flip_label_to_zero():
+    """High-fee exchange pair: a future gross spread above the OLD spread
+    threshold must still produce label=0 when fees exceed the gross gain.
+    This catches a regression to the old spread-only labelling.
+    """
+    from ml.training.label_generator import generate_labels
+
+    # Kraken taker fee = 0.26% per leg; round-trip taker = 0.52%;
+    # withdrawals sum to ~0.0003%. Round-trip ratio ~0.005203.
+    df = pd.DataFrame({
+        "event_time": pd.to_datetime([
+            "2026-04-20T00:00:00.000Z",
+            "2026-04-20T00:00:00.100Z",
+            "2026-04-20T00:00:00.200Z",
+        ]),
+        "symbol":     ["BTC/USD"] * 3,
+        "exchange_a": ["kraken"] * 3,
+        "exchange_b": ["kraken"] * 3,
+        "price_a":    [100.0, 100.0, 100.0],
+        # Future gross = (100.3 - 100) / 100 = 0.3%  (above old 0.0015 threshold)
+        # Future net   = 0.003 - 0.005203 < 0  -> label 0 under new logic
+        "price_b":    [100.0, 100.0, 100.3],
+        "spread_pct": [0.0,   0.0,   0.003],
+        "spread_abs": [0.0,   0.0,   0.3],
+    })
+
+    labelled = generate_labels(df, execution_latency_ms=200)
+
+    assert int(labelled.iloc[0]["label"]) == 0
+
+
+def test_generate_labels_no_direct_spread_leakage():
+    """Flat current spread with a profitable FUTURE spread must still
+    produce label=1 - proves the label is not a function of the
+    CURRENT spread_pct feature value.
+    """
+    from ml.training.label_generator import generate_labels
+
+    df = pd.DataFrame({
+        "event_time": pd.to_datetime([
+            "2026-04-20T00:00:00.000Z",
+            "2026-04-20T00:00:00.100Z",
+            "2026-04-20T00:00:00.200Z",
+        ]),
+        "symbol":     ["BTC/USD"] * 3,
+        "exchange_a": ["binance"] * 3,
+        "exchange_b": ["coinbase"] * 3,
+        "price_a":    [100.0, 100.0, 100.0],
+        "price_b":    [100.0, 100.0, 101.0],   # flat now, spike later
+        "spread_pct": [0.0,   0.0,   0.01],    # current feature is 0 for row 0
+        "spread_abs": [0.0,   0.0,   1.0],
+    })
+
+    labelled = generate_labels(df, execution_latency_ms=200)
+
+    assert int(labelled.iloc[0]["label"]) == 1
+    assert float(labelled.iloc[0]["spread_pct"]) == 0.0
 
 
 # -----------------------------------------------------------------------
