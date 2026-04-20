@@ -89,6 +89,43 @@ def test_label_generator_no_future_leakage():
 
 
 # -----------------------------------------------------------------------
+# Test 3b: compute_trade_profit_pct — fee-aware round-trip profit
+# -----------------------------------------------------------------------
+
+def test_compute_trade_profit_pct_direction_and_fees():
+    """Profit calc must pick the correct buy/sell direction per row and
+    subtract round-trip taker + withdrawal fees (percent units).
+    """
+    from ml.training.label_generator import compute_trade_profit_pct
+
+    # price_a < price_b -> buy on exchange_a, sell on exchange_b.
+    # gross = (101 - 100) / 100 = 0.01 (1%)
+    # fees  = binance_taker(0.1) + coinbase_taker(0.05)
+    #       + binance_withdrawal(0.0005) + coinbase_withdrawal(0.0)
+    #       = 0.1505 % -> 0.001505 as ratio
+    # net   = 0.01 - 0.001505 = 0.008495
+    row = pd.Series({
+        "price_a": 100.0, "price_b": 101.0,
+        "exchange_a": "binance", "exchange_b": "coinbase",
+    })
+    assert abs(compute_trade_profit_pct(row) - 0.008495) < 1e-9
+
+    # Reversed direction - price_a > price_b -> buy on exchange_b, sell on exchange_a.
+    row_rev = pd.Series({
+        "price_a": 101.0, "price_b": 100.0,
+        "exchange_a": "binance", "exchange_b": "coinbase",
+    })
+    assert abs(compute_trade_profit_pct(row_rev) - 0.008495) < 1e-9
+
+    # Unknown exchange -> raises (fail loud rather than silently pricing 0 fees)
+    with pytest.raises(KeyError):
+        compute_trade_profit_pct(pd.Series({
+            "price_a": 1.0, "price_b": 2.0,
+            "exchange_a": "binance", "exchange_b": "ftx",
+        }))
+
+
+# -----------------------------------------------------------------------
 # Test 4: Walk-forward splits are chronological and non-overlapping
 # -----------------------------------------------------------------------
 
