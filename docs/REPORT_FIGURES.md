@@ -72,7 +72,14 @@ Saved: docs/figures/fig_7_7_latency.png
 
 - **Fig 7.1** — horizontal bar chart of `feature_importances_` gain values for
   the 10 features baked into the XGBoost arbitrage classifier
-  (`train_xgboost.py:20-24`). Largest contributor on top.
+  (`train_xgboost.py:20-24`). Generated against the redesigned label defined
+  in `ml/training/label_generator.py`, where a row is positive iff a
+  round-trip trade opened now would clear taker + withdrawal fees on both
+  legs when closed at T + 200 ms. Under this label, `spread_pct` remains the
+  strongest single signal (as expected — spread is the primary arbitrage
+  driver) but no longer carries the near-unit gain that the previous
+  spread-threshold label produced. The earlier spread-only label is
+  discussed in §7 "Further steps" as the motivating defect.
 - **Fig 7.2** — train and validation binary cross-entropy per epoch pulled from
   the most recent MLflow run in the `price_direction_lstm` experiment. The gap
   between the curves is the visual evidence for the overfitting discussion.
@@ -244,6 +251,7 @@ All of these can reuse the existing scripts as templates:
 | D | GARCH residual ACF / PACF (2×1 subplot) | `result.std_resid` | Demonstrates the model has de-correlated the squared returns. |
 | E | Isolation Forest anomaly timeline | `df.event_time` vs. `scores` | Converts 7.3's scatter into a narrative: "these bursts are when". |
 | F | Latency histogram from real telemetry | API access log or Kafka end-to-end probe | Upgrades 7.7's block diagram into a distribution plot with p50/p95/p99 lines. |
+| G | Class-balance before/after label redesign | `label_generator` stdout + a short bar | Makes the leakage fix visible to the reader in numbers. |
 
 ### 7.3 Figure style consistency
 
