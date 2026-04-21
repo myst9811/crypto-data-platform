@@ -230,8 +230,13 @@ curl -s http://localhost:8000/api/v1/prices | head    # should show current rows
 
 1. Warm the API's model cache so the panels hit the **retrained** pkl:
    ```bash
-   curl http://localhost:8000/api/v1/ml/predict?symbol=BTC/USD
+   curl -s "http://localhost:8000/api/v1/predictions/BTC/USD"
+   curl -s "http://localhost:8000/api/v1/anomalies/recent"
+   curl -s "http://localhost:8000/api/v1/volatility/BTC/USD"
+   curl -s "http://localhost:8000/api/v1/arbitrage/live"
    ```
+   (One call per ML panel on the Insights page. Full route list:
+   `curl -s http://localhost:8000/api/v1/openapi.json | python -m json.tool | grep -A1 '"paths"'`.)
 2. Navigate to **ML Insights** and refresh.
 3. Confirm all four panels render: XGBoost probability card, LSTM
    direction card, anomaly flag, GARCH σ² sparkline.
