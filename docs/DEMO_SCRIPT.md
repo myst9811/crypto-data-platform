@@ -18,7 +18,7 @@ streamlit run src/serving/dashboard/app.py
 ```
 
 Open two browser tabs:
-- **Tab 1:** `http://localhost:8000/docs` — FastAPI interactive docs
+- **Tab 1:** `http://localhost:8000/api/v1/docs` — FastAPI interactive docs
 - **Tab 2:** `http://localhost:8501` — Streamlit dashboard
 
 ---
@@ -47,7 +47,7 @@ Open the architecture diagram (`diagram-export-14-04-2026.png`). Point to each l
 
 ## [2:30 – 8:30] ML Deep-Dive via FastAPI Docs
 
-Switch to **Tab 1:** `http://localhost:8000/docs`
+Switch to **Tab 1:** `http://localhost:8000/api/v1/docs`
 
 Hit these four endpoints in order. Say the line **before** you click.
 
